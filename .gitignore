@@ -1,0 +1,7 @@
+# Личные данные трекера: в публичный репозиторий им нельзя
+manhwa-data.json
+backups/
+manhwa_tracker_*.json
+
+__pycache__/
+.claude/
