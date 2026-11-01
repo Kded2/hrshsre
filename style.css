@@ -932,8 +932,14 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     inset: calc(14px + env(safe-area-inset-top)) auto auto 50%;
     transform: translateX(-50%);
     display: grid;
+    /* Safari растягивает контейнер popover, а вместе с ним и строки сетки */
+    grid-auto-rows: max-content;
+    align-content: start;
+    align-items: start;
     gap: 8px;
     width: min(440px, calc(100vw - 32px));
+    height: fit-content;
+    max-height: calc(100dvh - 28px);
     margin: 0;
     padding: 0;
     border: 0;
@@ -948,9 +954,10 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     justify-content: space-between;
     gap: 10px;
     min-height: 50px;
+    height: auto;
     padding: 8px 10px 8px 18px;
     pointer-events: auto;
-    border-radius: 999px;
+    border-radius: 25px; /* Длинный текст переносится, и полная капсула стала бы овалом */
     background: var(--glass-sheet);
     -webkit-backdrop-filter: blur(30px) saturate(190%);
     backdrop-filter: blur(30px) saturate(190%);
