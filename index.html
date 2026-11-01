@@ -9,6 +9,13 @@
     <link rel="icon" href="favicon.ico.png" type="image/png">
     <link rel="stylesheet" href="style.css">
     <script>
+        // Скрипт Telegram нужен только внутри его окна: в браузере он лишний и может быть недоступен
+        // Параметр server остаётся в адресе и после перезагрузки, когда хеш уже сменился
+        if (/tgWebApp|[?&]server=/.test(location.hash + location.search)) {
+            document.write('<script src="https://telegram.org/js/telegram-web-app.js?64"><\/script>');
+        }
+    </script>
+    <script>
         // Применяем тему и оформление до отрисовки, чтобы не было вспышки
         (() => {
             try {

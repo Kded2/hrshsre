@@ -1,5 +1,8 @@
 /* --- Токены темы --- */
 :root {
+    /* Отступы от выреза экрана; в окне Telegram их задаёт его скрипт, в браузере они равны нулю */
+    --safe-top: max(env(safe-area-inset-top), calc(var(--tg-safe-area-inset-top, 0px) + var(--tg-content-safe-area-inset-top, 0px)));
+    --safe-bottom: max(env(safe-area-inset-bottom), var(--tg-safe-area-inset-bottom, 0px));
     color-scheme: dark;
     --bg: #0d0b16;
     --text: #f4f1fb;
@@ -98,7 +101,7 @@ body {
     color: var(--text);
     font: 15px/1.45 var(--font);
     -webkit-font-smoothing: antialiased;
-    padding: 0 max(24px, env(safe-area-inset-right)) calc(128px + env(safe-area-inset-bottom)) max(24px, env(safe-area-inset-left));
+    padding: var(--safe-top) max(24px, env(safe-area-inset-right)) calc(128px + var(--safe-bottom)) max(24px, env(safe-area-inset-left));
     overflow-x: hidden;
 }
 
@@ -848,7 +851,7 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     position: fixed;
     z-index: 30;
     left: 50%;
-    bottom: calc(18px + env(safe-area-inset-bottom));
+    bottom: calc(18px + var(--safe-bottom));
     transform: translateX(-50%);
     display: flex;
     align-items: stretch;
@@ -910,7 +913,7 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     position: fixed;
     z-index: 31;
     left: 50%;
-    bottom: calc(90px + env(safe-area-inset-bottom));
+    bottom: calc(90px + var(--safe-bottom));
     transform: translateX(-50%);
     display: flex;
     flex-wrap: wrap;
@@ -929,7 +932,8 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 /* Уведомления */
 .toasts {
     position: fixed;
-    inset: calc(14px + env(safe-area-inset-top)) auto auto 50%;
+    inset: calc(14px + var(--safe-top)) auto auto 50%;
+    z-index: 2147483000; /* Без popover в старых WebView уведомления всё равно должны быть сверху */
     transform: translateX(-50%);
     display: grid;
     /* Safari растягивает контейнер popover, а вместе с ним и строки сетки */
@@ -939,7 +943,7 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     gap: 8px;
     width: min(440px, calc(100vw - 32px));
     height: fit-content;
-    max-height: calc(100dvh - 28px);
+    max-height: calc(var(--tg-viewport-stable-height, 100dvh) - 28px);
     margin: 0;
     padding: 0;
     border: 0;
@@ -1027,7 +1031,7 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     }
     dialog.ask { margin: auto 16px; width: calc(100vw - 32px); border-radius: var(--r-xl); }
     dialog.palette { margin: 12px 16px auto; width: calc(100vw - 32px); border-radius: var(--r-l); }
-    .sheet-body { padding: 16px 16px calc(20px + env(safe-area-inset-bottom)); }
+    .sheet-body { padding: 16px 16px calc(20px + var(--safe-bottom)); }
     .detail-hero { padding: 16px; grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
     .detail-cover { width: 104px; }
 }

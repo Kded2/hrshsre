@@ -96,8 +96,18 @@ document.addEventListener('DOMContentLoaded', () => {
     const askText = document.getElementById('ask-text');
     const askButtons = document.getElementById('ask-buttons');
 
+    // Окно Telegram: initData есть только при запуске кнопкой бота
+    const webApp = window.Telegram?.WebApp;
+    const inTelegram = Boolean(webApp?.initData);
+    const paintTelegram = (color) => {
+        if (!inTelegram || !webApp.isVersionAtLeast('6.1')) return;
+        webApp.setHeaderColor(color);
+        webApp.setBackgroundColor(color);
+        if (webApp.isVersionAtLeast('7.10')) webApp.setBottomBarColor(color);
+    };
+
     // --- Утилиты ---
-    const esc = (value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
+    const esc =(value) => String(value ?? '').replace(/[&<>"']/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]));
     const icon = (name, extra = '') => `<svg class="icon ${extra}"><use href="#i-${name}"/></svg>`;
     const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
     const clamp = (value, min, max) => Math.min(max, Math.max(min, value));
@@ -1048,6 +1058,7 @@ document.addEventListener('DOMContentLoaded', () => {
         root.dataset.theme = dark ? 'dark' : 'light';
         themeIcon.setAttribute('href', dark ? '#i-moon' : '#i-sun');
         document.querySelector('meta[name="theme-color"]').content = dark ? '#0d0b16' : '#ece8f6';
+        paintTelegram(dark ? '#0d0b16' : '#ece8f6');
     };
 
     const setTheme = (theme) => {
@@ -1075,8 +1086,10 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         toasts.append(el);
         // Открытые листы лежат в верхнем слое: повторный показ поднимает уведомления над ними
-        if (toasts.matches(':popover-open')) toasts.hidePopover();
-        toasts.showPopover();
+        if (toasts.showPopover) { // Старые WebView popover не знают, там работает обычный fixed
+            if (toasts.matches(':popover-open')) toasts.hidePopover();
+            toasts.showPopover();
+        }
         while (toasts.children.length > 3) toasts.firstChild.remove();
         setTimeout(remove, onUndo ? 6000 : 3500);
     };
@@ -2191,7 +2204,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const botStatusText = () => {
         if (!telegram.url) return 'Коллекция появится на всех устройствах, а бот сможет отмечать главы и сообщать о новых. Запусти бота на сервере и подключи его.';
-        if (telegram.status === 'auth') return 'Сервер не принял ключ. Отключи бота и впиши ключ заново.';
+        if (telegram.status === 'auth') return inTelegram ? 'Сервер не принял вход. Закрой окно и открой его заново кнопкой бота.' : 'Сервер не принял ключ. Отключи бота и впиши ключ заново.';
         if (telegram.status === 'error') return `Сервер ${hostOf(telegram.url)} не отвечает, изменения отправлю позже.`;
         const time = telegram.syncedAt ? `, синхронизировано ${new Date(telegram.syncedAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}` : '';
         return `Подключён к ${hostOf(telegram.url)}${time}.`;
@@ -2205,9 +2218,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const botRequest = async (path, body) => {
         const response = await fetch(`${telegram.url}${path}`, {
             method: 'POST',
-            headers: { Authorization: `Bearer ${telegram.key}`, 'Content-Type': 'application/json' },
+            // В окне Telegram вход подтверждает его подпись, ключ там не нужен
+            headers: { Authorization: telegram.key ? `Bearer ${telegram.key}` : `tma ${webApp?.initData}`, 'Content-Type': 'application/json' },
             body: JSON.stringify(body),
-            signal: AbortSignal.timeout(BOT_TIMEOUT)
+            signal: AbortSignal.timeout?.(BOT_TIMEOUT)
         });
         if (!response.ok) throw new Error(String(response.status));
         return response.json();
@@ -2326,6 +2340,18 @@ document.addEventListener('DOMContentLoaded', () => {
             localStorage.removeItem(BOT_QUEUE);
         }
         if (state.route === 'settings') render();
+    };
+
+    // Адрес сервера приходит в ссылке кнопки бота, поэтому в Telegram вводить ничего не нужно
+    const startTelegram = () => {
+        if (!inTelegram) return;
+        webApp.ready();
+        webApp.expand();
+        if (webApp.isVersionAtLeast('7.7')) webApp.disableVerticalSwipes(); // Иначе прокрутка вниз сворачивает окно
+        const server = new URLSearchParams(location.search).get('server') || '';
+        if (!/^(https:\/\/|http:\/\/localhost\b)/.test(server) || telegram.url === server) return;
+        Object.assign(telegram, { url: server, key: '', rev: 0, status: 'off' });
+        writeQueue({ ids: state.mangas.map((m) => m.id), deleted: {} });
     };
 
     const disconnectBot = () => {
@@ -2792,7 +2818,8 @@ document.addEventListener('DOMContentLoaded', () => {
     applyTheme();
     applyRoute();
     postToExtension({ type: 'hello' });
-    // Правки из Telegram накладываются на данные с диска, поэтому сначала нужен файл
+    startTelegram();
+    // Правки с других устройств накладываются на данные с диска, поэтому сначала нужен файл
     restoreFolder().finally(botSync);
     setInterval(() => {
         if (!document.hidden) botSync();
