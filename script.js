@@ -48,7 +48,7 @@ document.addEventListener('DOMContentLoaded', () => {
         amber: { label: 'Янтарный', color: '#f59e0b' }
     };
 
-    const ROUTES = ['home', 'library', 'stats', 'settings', 'year'];
+    const ROUTES = ['home', 'library', 'stats', 'games', 'settings', 'year'];
 
     // --- Элементы DOM ---
     const root = document.documentElement;
@@ -1000,7 +1000,7 @@ document.addEventListener('DOMContentLoaded', () => {
                         <div>Новая манхва <kbd>N</kbd></div>
                         <div>Случайный тайтл <kbd>R</kbd></div>
                         <div>Сменить тему <kbd>T</kbd></div>
-                        <div>Разделы <kbd>1–4</kbd></div>
+                        <div>Разделы <kbd>1–5</kbd></div>
                         <div>Поиск в библиотеке <kbd>/</kbd></div>
                     </div>
                 </section>
@@ -1009,7 +1009,7 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     // --- Отрисовка и маршруты ---
-    const renderers = { home: renderHome, library: renderLibrary, stats: renderStats, settings: renderSettings, year: renderYear };
+    const renderers = { home: renderHome, library: renderLibrary, stats: renderStats, games: () => window.Games.render(view), settings: renderSettings, year: renderYear };
 
     const moveTabPill = () => {
         const active = tabbar.querySelector('.tab.active');
@@ -1030,6 +1030,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const hash = location.hash.slice(1);
         const route = ROUTES.includes(hash) ? hash : 'home';
         if (route !== 'library' && state.selecting) stopSelecting();
+        if (route !== 'games') window.Games.leave();
         state.route = route;
         tabbar.querySelectorAll('.tab').forEach((tab) => {
             const active = tab.dataset.route === (route === 'year' ? 'stats' : route);
@@ -2379,7 +2380,8 @@ document.addEventListener('DOMContentLoaded', () => {
         { label: 'Главная', hint: '1', name: 'home', run: () => { location.hash = 'home'; } },
         { label: 'Библиотека', hint: '2', name: 'library', run: () => { location.hash = 'library'; } },
         { label: 'Статистика', hint: '3', name: 'chart', run: () => { location.hash = 'stats'; } },
-        { label: 'Настройки', hint: '4', name: 'gear', run: () => { location.hash = 'settings'; } },
+        { label: 'Игры', hint: '4', name: 'gamepad', run: () => { location.hash = 'games'; } },
+        { label: 'Настройки', hint: '5', name: 'gear', run: () => { location.hash = 'settings'; } },
         { label: 'Экспорт JSON', hint: '', name: 'download', run: exportJson },
         { label: 'Импорт из файла', hint: '', name: 'upload', run: () => importInput.click() }
     ];
@@ -2748,7 +2750,8 @@ document.addEventListener('DOMContentLoaded', () => {
             1: () => { location.hash = 'home'; },
             2: () => { location.hash = 'library'; },
             3: () => { location.hash = 'stats'; },
-            4: () => { location.hash = 'settings'; },
+            4: () => { location.hash = 'games'; },
+            5: () => { location.hash = 'settings'; },
             '/': () => {
                 if (state.route !== 'library') location.hash = 'library';
                 setTimeout(() => document.getElementById('lib-search')?.focus(), 0);

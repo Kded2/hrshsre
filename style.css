@@ -993,6 +993,201 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     transform: translate(-50%, calc(-100% - 10px));
 }
 
+/* --- Игры --- */
+.game-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+.game-card {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    width: 100%;
+    padding: 16px;
+    text-align: left;
+    transition: transform 0.3s var(--spring);
+}
+.game-card > * { position: relative; z-index: 3; }
+.game-card:hover { transform: translateY(-3px); }
+.game-card:active { transform: scale(0.98); }
+.game-card .brand-mark { flex: none; width: 48px; height: 48px; }
+.game-card-text { display: grid; gap: 1px; min-width: 0; }
+.game-card-text b { font-size: 17px; font-weight: 660; }
+.game-card-text span { color: var(--text-2); font-size: 14px; }
+.game-card-text small { color: var(--text-3); font-size: 12.5px; }
+
+.game-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 8px 0 12px;
+    padding: 5px;
+    border-radius: 999px;
+}
+.game-bar > * { position: relative; z-index: 3; }
+.game-title { font-size: 16px; font-weight: 660; white-space: nowrap; }
+.game-hud {
+    flex: 1;
+    min-width: 0;
+    padding-inline: 6px;
+    overflow: hidden;
+    color: var(--text-2);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.game-status { min-height: 22px; margin: 12px 0 10px; color: var(--text-2); text-align: center; }
+.game-actions { display: grid; gap: 12px; }
+.game-buttons, .coins { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+.game-chips { justify-content: center; }
+
+/* Высота поля ограничена, чтобы оно целиком помещалось над доком */
+.game-stage {
+    --view: var(--tg-viewport-stable-height, 100dvh);
+    position: relative;
+    width: min(100%, 560px, calc((var(--view) - 240px - var(--safe-top) - var(--safe-bottom)) * var(--ratio, 1)));
+    min-width: 240px;
+    margin-inline: auto;
+    overflow: hidden;
+    border-radius: var(--r-l);
+    background: var(--tint);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+}
+.game-canvas { display: block; width: 100%; aspect-ratio: var(--ratio, 1); touch-action: none; }
+.game-overlay { position: absolute; inset: 0; display: grid; place-items: center; padding: 16px; }
+.game-dialog { display: grid; gap: 12px; width: min(100%, 300px); padding: 20px; text-align: center; }
+.game-dialog > * { position: relative; z-index: 3; }
+.game-dialog h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.015em; }
+.game-dialog p { color: var(--text-2); }
+
+.mines { display: grid; gap: 4px; }
+.mines-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-bottom: 10px; }
+.mines-tools .icon { width: 15px; height: 15px; }
+.mines-board {
+    display: grid;
+    grid-template-columns: repeat(var(--cols), minmax(0, 1fr));
+    gap: 3px;
+    width: min(100%, calc(var(--cols) * 40px));
+    margin-inline: auto;
+    -webkit-touch-callout: none;
+    -webkit-user-select: none;
+    user-select: none;
+    touch-action: manipulation;
+}
+.mine-cell {
+    display: grid;
+    place-items: center;
+    aspect-ratio: 1;
+    min-width: 0;
+    border-radius: 7px;
+    background: var(--tint-strong);
+    box-shadow: inset 0 1px 0 var(--inner-glow);
+    font-size: clamp(13px, 3.8vw, 17px);
+    font-weight: 750;
+    font-variant-numeric: tabular-nums;
+}
+.mine-cell .icon { width: 68%; height: 68%; }
+.mine-cell:not(.open):hover { background: color-mix(in srgb, var(--accent) 34%, var(--tint-strong)); }
+.mine-cell.open { background: var(--tint); box-shadow: none; }
+.mine-cell.flagged { color: var(--accent); }
+.mine-cell.boom { color: #fff; background: var(--danger); }
+.mine-cell[data-count="1"] { color: var(--s-reading); }
+.mine-cell[data-count="2"] { color: var(--s-completed); }
+.mine-cell[data-count="3"] { color: var(--danger); }
+.mine-cell[data-count="4"] { color: var(--s-dropped); }
+.mine-cell[data-count="5"], .mine-cell[data-count="6"] { color: var(--s-planned); }
+.mine-cell[data-count="7"], .mine-cell[data-count="8"] { color: var(--s-on-hold); }
+
+.table-game { display: grid; width: min(100%, 720px); margin-inline: auto; }
+.felt { display: grid; gap: 14px; padding: 16px; }
+.felt > * { position: relative; z-index: 3; }
+.felt-side { display: grid; gap: 7px; min-width: 0; padding: 6px; border-radius: var(--r-m); }
+.felt-side.current { background: var(--tint); box-shadow: inset 0 0 0 1px var(--accent); }
+.felt-label { color: var(--text-2); font-size: 13px; font-weight: 550; text-align: center; font-variant-numeric: tabular-nums; }
+
+/* Ширина колонки сжимается под число карт, сами карты остаются целыми и ложатся внахлёст */
+.card-hand {
+    --cw: 64px;
+    display: grid;
+    justify-content: center;
+    min-height: calc(var(--cw) * 1.42);
+}
+.card-hand.small { --cw: 38px; }
+.pcard {
+    --cw-in: var(--cw, 56px);
+    position: relative;
+    display: grid;
+    width: var(--cw-in);
+    height: calc(var(--cw-in) * 1.42);
+    padding: 0 0 0 calc(var(--cw-in) * 0.09);
+    align-content: start;
+    border-radius: calc(var(--cw-in) * 0.15);
+    color: #1b1726;
+    background: #fbf9ff;
+    box-shadow: 0 3px 10px var(--shadow), inset 0 0 0 1px rgba(40, 25, 80, 0.14);
+    font-size: calc(var(--cw-in) * 0.3);
+    line-height: 1.15;
+    text-align: left;
+    transition: transform 0.25s var(--spring), filter 0.2s ease;
+}
+.pcard.red { color: #d8323a; }
+.pcard b { padding-top: calc(var(--cw-in) * 0.06); font-weight: 720; }
+.pcard i {
+    position: absolute;
+    right: 0;
+    bottom: calc(var(--cw-in) * 0.07);
+    left: 0;
+    font-size: calc(var(--cw-in) * 0.56);
+    font-style: normal;
+    line-height: 1;
+    text-align: center;
+}
+.pcard.back {
+    background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 80%, white), var(--accent));
+    box-shadow: 0 3px 10px var(--shadow), inset 0 0 0 3px rgba(255, 255, 255, 0.5);
+}
+.pcard.fresh { animation: card-in 0.38s var(--spring) both; }
+.pcard[disabled] { cursor: default; }
+.pcard.dim { filter: brightness(0.62); }
+.card-hand button.pcard:not([disabled]):hover { transform: translateY(-7px); z-index: 2; }
+.pcard.picked { transform: translateY(-11px); box-shadow: 0 0 0 3px var(--accent), 0 8px 18px var(--shadow); }
+.pcard.target { box-shadow: 0 0 0 3px var(--accent); }
+@keyframes card-in {
+    from { opacity: 0; transform: translateY(-14px) scale(0.86); }
+    to   { opacity: 1; transform: none; }
+}
+
+.coins { margin-top: 2px; }
+.coin {
+    width: 56px;
+    height: 56px;
+    border-radius: 50%;
+    color: var(--accent-ink);
+    background: var(--accent);
+    box-shadow: inset 0 0 0 4px rgba(255, 255, 255, 0.34), 0 4px 12px var(--shadow);
+    font-weight: 720;
+    font-variant-numeric: tabular-nums;
+    transition: transform 0.25s var(--spring);
+}
+.coin:hover { transform: translateY(-3px); }
+.coin:active { transform: scale(0.92); }
+.coin:disabled { opacity: 0.4; cursor: default; }
+
+.durak-middle { display: grid; grid-template-columns: 78px minmax(0, 1fr); align-items: center; gap: 10px; min-height: 124px; }
+.talon { --cw: 46px; position: relative; display: grid; justify-items: center; gap: 6px; }
+.talon .pcard { grid-area: 1 / 1; }
+.talon-trump { grid-area: 1 / 1; transform: translateX(13px) rotate(90deg); }
+.talon .felt-label { font-size: 11.5px; line-height: 1.25; }
+.durak-table { --cw: 50px; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 14px; min-width: 0; }
+.card-pair { position: relative; width: 66px; height: 84px; }
+.card-pair .pcard.cover { position: absolute; top: 12px; left: 16px; }
+
+.setup { display: grid; gap: 10px; width: min(100%, 420px); margin: 12px auto 0; padding: 22px; text-align: center; }
+.setup > * { position: relative; z-index: 3; }
+.setup h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.015em; }
+.setup p { color: var(--text-2); }
+.setup .label { margin: 6px 0 -2px; }
+.setup .btn { margin-top: 8px; }
+
 /* --- Адаптив --- */
 @media (max-width: 960px) {
     .tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -1019,8 +1214,20 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 
     .dock { left: 16px; right: 16px; width: auto; max-width: none; transform: none; }
     .tabbar { flex: 1; }
-    .tab { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 1px; padding: 5px 2px; font-size: 10.5px; }
-    .dock-add { width: 60px; }
+    .tab { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 1px; padding: 5px 0; font-size: 10px; letter-spacing: -0.01em; }
+    .dock { gap: 6px; }
+    .dock-add { width: 50px; }
+
+    .game-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .game-card { padding: 13px; }
+    .felt { padding: 10px; gap: 8px; }
+    .card-hand { --cw: 54px; }
+    .card-hand.small { --cw: 30px; }
+    .durak-middle { grid-template-columns: 62px minmax(0, 1fr); }
+    .talon { --cw: 36px; }
+    .durak-table { --cw: 42px; gap: 6px 10px; }
+    .card-pair { width: 56px; height: 72px; }
+    .card-pair .pcard.cover { top: 10px; left: 13px; }
 
     dialog.sheet {
         width: 100vw;
@@ -1034,6 +1241,10 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     .sheet-body { padding: 16px 16px calc(20px + var(--safe-bottom)); }
     .detail-hero { padding: 16px; grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
     .detail-cover { width: 104px; }
+}
+
+@media (max-width: 380px) {
+    .tab { font-size: 9.5px; }
 }
 
 @media (hover: none) {
