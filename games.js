@@ -224,121 +224,16 @@ window.Games = (() => {
             togglePause: () => (mode === 'run' ? pause() : mode === 'pause' && run()),
             redraw: draw,
             key(e, down) {
-                const key = { arrowleft: 'left', a: 'left', ф: 'left', arrowright: 'right', d: 'right', в: 'right', arrowup: 'up', w: 'up', ц: 'up', arrowdown: 'down', s: 'down', ы: 'down', ' ': 'space', p: 'pause', з: 'pause' }[e.key?.toLowerCase()];
+                const key = { arrowleft: 'left', a: 'left', ф: 'left', arrowright: 'right', d: 'right', в: 'right', ' ': 'space', p: 'pause', з: 'pause' }[e.key?.toLowerCase()];
                 if (!key) return;
                 if (key === 'left' || key === 'right') held[key] = down; // Отпускание важно и под окном паузы
                 if (!overlay.hidden) return;
                 e.preventDefault();
                 if (!down || e.repeat) return;
                 if (key === 'pause' || (key === 'space' && !game.action?.())) pause();
-                else game.key?.(key);
             }
         };
     };
-
-    // --- Змейка ---
-    const snake = arcade(({ hud, finish }) => {
-        const SIZE = 17;
-        const DIRS = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
-        let body, dir, queue, food, wait, eaten, swipe;
-
-        const placeFood = () => {
-            const free = [];
-            for (let x = 0; x < SIZE; x++) {
-                for (let y = 0; y < SIZE; y++) if (!body.some((p) => p[0] === x && p[1] === y)) free.push([x, y]);
-            }
-            food = free.length ? pick(free) : null;
-        };
-        const paintHud = () => hud(`Счёт ${eaten} · Рекорд ${data.best.snake || 0}`);
-        const turn = (next) => {
-            const last = queue[queue.length - 1] || dir;
-            if (queue.length < 2 && next[0] !== -last[0] && next[1] !== -last[1] && (next[0] !== last[0] || next[1] !== last[1])) queue.push(next);
-        };
-        const stepForward = () => {
-            dir = queue.shift() || dir;
-            const head = [body[0][0] + dir[0], body[0][1] + dir[1]];
-            const grows = food && head[0] === food[0] && head[1] === food[1];
-            const rest = grows ? body : body.slice(0, -1);
-            const dead = head[0] < 0 || head[1] < 0 || head[0] >= SIZE || head[1] >= SIZE || rest.some((p) => p[0] === head[0] && p[1] === head[1]);
-            if (dead) {
-                const fresh = record('snake', eaten);
-                paintHud();
-                return finish('Конец игры', `Счёт ${eaten}${fresh && eaten ? ', новый рекорд!' : ''}`);
-            }
-            body = [head, ...rest];
-            if (grows) {
-                eaten++;
-                paintHud();
-                placeFood();
-                if (!food) {
-                    record('snake', eaten);
-                    finish('Победа', 'Змейка заполнила всё поле');
-                }
-            }
-        };
-
-        return {
-            width: SIZE * 20,
-            height: SIZE * 20,
-            hintKeys: 'Стрелки или WASD, пробел для паузы',
-            hintTouch: 'Проводи пальцем по полю, чтобы повернуть',
-            reset() {
-                body = [[8, 8], [7, 8], [6, 8]];
-                dir = DIRS.right;
-                queue = [];
-                wait = 0;
-                eaten = 0;
-                placeFood();
-                paintHud();
-            },
-            update(dt) {
-                wait += dt;
-                const speed = Math.max(0.075, 0.16 - eaten * 0.003);
-                if (wait >= speed) {
-                    wait -= speed;
-                    stepForward();
-                }
-            },
-            key(name) {
-                if (DIRS[name]) turn(DIRS[name]);
-            },
-            pointer(type, x, y) {
-                if (type === 'pointerdown') swipe = [x, y];
-                if (type === 'pointerup') swipe = null;
-                if (type !== 'pointermove' || !swipe) return;
-                const dx = x - swipe[0];
-                const dy = y - swipe[1];
-                if (Math.max(Math.abs(dx), Math.abs(dy)) < 16) return;
-                turn(Math.abs(dx) > Math.abs(dy) ? DIRS[dx > 0 ? 'right' : 'left'] : DIRS[dy > 0 ? 'down' : 'up']);
-                swipe = [x, y];
-            },
-            draw(c, theme) {
-                c.fillStyle = theme.tint;
-                for (let x = 0; x < SIZE; x++) {
-                    for (let y = 0; y < SIZE; y++) if ((x + y) % 2) c.fillRect(x * 20, y * 20, 20, 20);
-                }
-                if (food) {
-                    c.fillStyle = theme.star;
-                    c.beginPath();
-                    c.arc(food[0] * 20 + 10, food[1] * 20 + 10, 7, 0, Math.PI * 2);
-                    c.fill();
-                }
-                c.strokeStyle = theme.accent;
-                c.lineWidth = 15;
-                c.lineCap = c.lineJoin = 'round';
-                c.beginPath();
-                body.forEach(([x, y], i) => c[i ? 'lineTo' : 'moveTo'](x * 20 + 10, y * 20 + 10));
-                c.stroke();
-                c.fillStyle = '#fff';
-                const [hx, hy] = body[0];
-                for (const side of [-4, 4]) {
-                    c.beginPath();
-                    c.arc(hx * 20 + 10 + dir[0] * 3 - dir[1] * side, hy * 20 + 10 + dir[1] * 3 + dir[0] * side, 2.2, 0, Math.PI * 2);
-                    c.fill();
-                }
-            }
-        };
-    });
 
     // --- Арканоид ---
     const breakout = arcade(({ hud, held, finish }) => {
@@ -604,6 +499,431 @@ window.Games = (() => {
             }
         };
     });
+
+    // --- Гонки ---
+    const racing = arcade(({ hud, held, finish }) => {
+        const W = 360;
+        const H = 480;
+        const ROAD = 30;
+        const LANE = 75;
+        const LANES = 4;
+        const CAR = { w: 36, h: 62, y: H - 92 };
+        const COIN_VALUE = 25;
+        const lanePos = (lane) => ROAD + LANE * (lane + 0.5);
+        const limit = (x) => clamp(x, ROAD + CAR.w / 2 + 2, W - ROAD - CAR.w / 2 - 2);
+        let x, target, cars, coins, meters, money, speed, road, gap;
+
+        const total = () => Math.floor(meters) + money * COIN_VALUE;
+        const paintHud = () => hud(`Счёт ${total()} · Рекорд ${data.best.racing || 0}`);
+        const spawn = () => {
+            // Хотя бы одна полоса всегда свободна
+            const lanes = shuffle([0, 1, 2, 3]);
+            const count = speed > 460 && Math.random() < 0.4 ? 3 : Math.random() < 0.5 ? 2 : 1;
+            lanes.slice(0, count).forEach((lane) => cars.push({ x: lanePos(lane), y: -70, color: Math.floor(Math.random() * 5) }));
+            if (Math.random() < 0.5) coins.push({ x: lanePos(lanes[LANES - 1]), y: -40 });
+            gap = 170 + Math.random() * 130;
+        };
+        const hits = (item, w, h) => Math.abs(item.x - x) < (w + CAR.w) / 2 - 5 && Math.abs(item.y + h / 2 - (CAR.y + CAR.h / 2)) < (h + CAR.h) / 2 - 5;
+        const paintCar = (c, cx, y, color, glass) => {
+            c.fillStyle = color;
+            roundRect(c, cx - CAR.w / 2, y, CAR.w, CAR.h, 9);
+            c.fill();
+            c.fillStyle = glass;
+            roundRect(c, cx - CAR.w / 2 + 6, y + 13, CAR.w - 12, 13, 4);
+            c.fill();
+            roundRect(c, cx - CAR.w / 2 + 6, y + 42, CAR.w - 12, 9, 3);
+            c.fill();
+        };
+
+        return {
+            width: W,
+            height: H,
+            hintKeys: 'Мышь или стрелки. Объезжай машины и собирай монеты',
+            hintTouch: 'Веди пальцем по дороге. Объезжай машины и собирай монеты',
+            reset() {
+                x = target = lanePos(1);
+                cars = [];
+                coins = [];
+                meters = 0;
+                money = 0;
+                speed = 240;
+                road = 0;
+                gap = 120;
+                paintHud();
+            },
+            pointer(type, px) {
+                target = limit(px);
+            },
+            update(dt) {
+                if (held.left || held.right) {
+                    x = limit(x + (held.right ? 1 : -1) * 380 * dt);
+                    target = x;
+                } else x += clamp(target - x, -620 * dt, 620 * dt);
+
+                const move = speed * dt;
+                meters += move / 10;
+                speed = Math.min(640, 240 + meters * 0.3);
+                road = (road + move) % 60;
+                gap -= move;
+                if (gap <= 0) spawn();
+                for (const item of [...cars, ...coins]) item.y += move;
+                cars = cars.filter((car) => car.y < H);
+                coins = coins.filter((coin) => {
+                    if (hits(coin, 22, 22)) {
+                        money++;
+                        return false;
+                    }
+                    return coin.y < H;
+                });
+                paintHud();
+                if (cars.some((car) => hits(car, CAR.w, CAR.h))) {
+                    const fresh = record('racing', total());
+                    paintHud();
+                    finish('Авария', `Счёт ${total()}${fresh ? ', новый рекорд!' : ''}`);
+                }
+            },
+            draw(c, theme) {
+                c.fillStyle = theme.tint;
+                c.fillRect(ROAD, 0, W - ROAD * 2, H);
+                c.fillStyle = theme.strong;
+                c.fillRect(ROAD - 4, 0, 4, H);
+                c.fillRect(W - ROAD, 0, 4, H);
+                c.fillStyle = theme.faint;
+                for (let lane = 1; lane < LANES; lane++) {
+                    for (let y = road - 60; y < H; y += 60) c.fillRect(ROAD + LANE * lane - 1.5, y, 3, 30);
+                }
+                c.fillStyle = theme.star;
+                for (const coin of coins) {
+                    c.beginPath();
+                    c.arc(coin.x, coin.y + 11, 11, 0, Math.PI * 2);
+                    c.fill();
+                }
+                for (const car of cars) paintCar(c, car.x, car.y, theme.rows[car.color], 'rgba(15, 12, 25, 0.55)');
+                paintCar(c, x, CAR.y, theme.accent, 'rgba(255, 255, 255, 0.72)');
+            }
+        };
+    });
+
+    // --- Башня ---
+    const tower = arcade(({ hud, finish }) => {
+        const W = 360;
+        const H = 480;
+        const BLOCK = 26;
+        const START = 170;
+        const SNAP = 5; // Почти точное попадание считается точным
+        let blocks, moving, falling, view, floors;
+
+        const paintHud = () => hud(`Этажи ${floors} · Рекорд ${data.best.tower || 0}`);
+        const nextBlock = () => {
+            const top = blocks[blocks.length - 1];
+            const fromLeft = blocks.length % 2 === 0;
+            moving = { x: fromLeft ? 0 : W - top.w, w: top.w, dir: fromLeft ? 1 : -1 }; // Из-за края блок не выезжает, иначе быстрый тап сразу проигрывает
+        };
+        const screenY = (index) => H - 44 - index * BLOCK + view;
+        const drop = () => {
+            const top = blocks[blocks.length - 1];
+            if (Math.abs(moving.x - top.x) <= SNAP) moving.x = top.x;
+            const left = Math.max(moving.x, top.x);
+            const width = Math.min(moving.x + moving.w, top.x + top.w) - left;
+            if (width <= 0) {
+                const fresh = record('tower', floors);
+                paintHud();
+                finish('Башня упала', `Этажей ${floors}${fresh && floors ? ', новый рекорд!' : ''}`);
+                return true;
+            }
+            if (width < moving.w) {
+                const cutLeft = moving.x < top.x;
+                falling.push({ x: cutLeft ? moving.x : left + width, w: moving.w - width, y: screenY(blocks.length) - view, speed: 0, index: blocks.length });
+            }
+            blocks.push({ x: left, w: width });
+            floors++;
+            paintHud();
+            nextBlock();
+            return true;
+        };
+
+        return {
+            width: W,
+            height: H,
+            hintKeys: 'Пробел или клик ставит блок',
+            hintTouch: 'Тапни, чтобы поставить блок точно на предыдущий',
+            action: drop,
+            reset() {
+                blocks = [{ x: (W - START) / 2, w: START }];
+                falling = [];
+                view = 0;
+                floors = 0;
+                nextBlock();
+                paintHud();
+            },
+            pointer(type) {
+                if (type === 'pointerdown') drop();
+            },
+            update(dt) {
+                const speed = Math.min(430, 170 + floors * 9);
+                moving.x += moving.dir * speed * dt;
+                if (moving.x > W - moving.w) moving.dir = -1;
+                if (moving.x < 0) moving.dir = 1;
+                const wanted = Math.max(0, blocks.length - 8) * BLOCK;
+                view += (wanted - view) * Math.min(1, dt * 7);
+                for (const piece of falling) {
+                    piece.speed += 900 * dt;
+                    piece.y += piece.speed * dt;
+                }
+                falling = falling.filter((piece) => piece.y < H + view);
+            },
+            draw(c, theme) {
+                const paint = (x, y, w, index) => {
+                    c.fillStyle = theme.rows[index % theme.rows.length];
+                    roundRect(c, x, y, w, BLOCK - 2, Math.min(5, w / 2));
+                    c.fill();
+                };
+                blocks.forEach((block, i) => {
+                    const y = screenY(i);
+                    if (y < H) paint(block.x, y, block.w, i);
+                });
+                paint(moving.x, screenY(blocks.length), moving.w, blocks.length);
+                for (const piece of falling) paint(piece.x, piece.y + view, piece.w, piece.index);
+            }
+        };
+    });
+
+    // --- 2048 ---
+    const merge = (shell) => {
+        const SIZE = 4;
+        const SWIPE = 24;
+        const SLIDE = 130;
+        const LETTERS = { arrowleft: 'left', a: 'left', ф: 'left', arrowright: 'right', d: 'right', в: 'right', arrowup: 'up', w: 'up', ц: 'up', arrowdown: 'down', s: 'down', ы: 'down' };
+        const el = make(`<div class="merge">
+            <div class="merge-board">${'<i class="merge-cell"></i>'.repeat(SIZE * SIZE)}</div>
+            <p class="game-status" role="status"></p>
+        </div>`);
+        const board = el.querySelector('.merge-board');
+        const status = el.querySelector('.game-status');
+        let grid, points, nextId, over, won, start;
+
+        const tiles = () => grid.flat().filter(Boolean);
+        const paintHud = () => shell.hud(`Счёт ${points} · Рекорд ${data.best.merge || 0}`);
+        const place = (node, tile) => {
+            node.style.setProperty('--r', tile.r);
+            node.style.setProperty('--c', tile.c);
+        };
+        const paint = () => {
+            const alive = new Set();
+            for (const tile of tiles()) {
+                alive.add(String(tile.id));
+                let node = board.querySelector(`[data-id="${tile.id}"]`);
+                if (!node) {
+                    node = make(`<span class="merge-tile fresh" data-id="${tile.id}"><b></b></span>`);
+                    place(node, tile);
+                    board.append(node);
+                }
+                place(node, tile);
+                const face = node.firstChild;
+                face.textContent = tile.v;
+                face.style.setProperty('--p', Math.min(100, Math.log2(tile.v) * 9));
+                node.classList.toggle('bright', tile.v >= 32);
+                node.classList.toggle('long', tile.v >= 1024);
+            }
+            board.querySelectorAll('.merge-tile').forEach((node) => {
+                if (!alive.has(node.dataset.id) && !node.dataset.gone) {
+                    node.dataset.gone = '1';
+                    setTimeout(() => node.remove(), SLIDE);
+                }
+            });
+            paintHud();
+        };
+        const addTile = () => {
+            const free = [];
+            grid.forEach((row, r) => row.forEach((tile, c) => { if (!tile) free.push([r, c]); }));
+            if (!free.length) return;
+            const [r, c] = pick(free);
+            grid[r][c] = { id: nextId++, v: Math.random() < 0.9 ? 2 : 4, r, c };
+        };
+        const stuck = () => {
+            for (let r = 0; r < SIZE; r++) {
+                for (let c = 0; c < SIZE; c++) {
+                    const tile = grid[r][c];
+                    if (!tile || grid[r][c + 1]?.v === tile.v || grid[r + 1]?.[c]?.v === tile.v) return false;
+                }
+            }
+            return true;
+        };
+        // Каждая линия читается от края, к которому едут плитки
+        const lineOf = (direction, i) => Array.from({ length: SIZE }, (_, j) => {
+            const k = direction === 'left' || direction === 'up' ? j : SIZE - 1 - j;
+            return direction === 'left' || direction === 'right' ? [i, k] : [k, i];
+        });
+        const move = (direction) => {
+            if (over) return;
+            const next = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+            const gone = [];
+            let moved = false;
+            for (let i = 0; i < SIZE; i++) {
+                const line = lineOf(direction, i);
+                let spot = 0;
+                let last = null;
+                for (const [r, c] of line) {
+                    const tile = grid[r][c];
+                    if (!tile) continue;
+                    if (last && last.v === tile.v && !last.merged) {
+                        last.v *= 2;
+                        last.merged = true;
+                        points += last.v;
+                        tile.r = last.r;
+                        tile.c = last.c;
+                        gone.push(tile);
+                        moved = true;
+                        continue;
+                    }
+                    const [nr, nc] = line[spot++];
+                    if (nr !== r || nc !== c) moved = true;
+                    tile.r = nr;
+                    tile.c = nc;
+                    next[nr][nc] = tile;
+                    last = tile;
+                }
+            }
+            if (!moved) return;
+            for (const tile of gone) {
+                const node = board.querySelector(`[data-id="${tile.id}"]`);
+                if (node) place(node, tile);
+            }
+            grid = next;
+            tiles().forEach((tile) => { tile.merged = false; });
+            addTile();
+            record('merge', points);
+            paint();
+            if (!won && tiles().some((tile) => tile.v >= 2048)) {
+                won = true;
+                status.textContent = 'Есть 2048! Можно играть дальше';
+            }
+            if (stuck()) {
+                over = true;
+                status.textContent = `Ходов больше нет. Счёт ${points}`;
+            }
+        };
+        const restart = () => {
+            grid = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
+            points = 0;
+            nextId = 1;
+            over = false;
+            won = false;
+            board.querySelectorAll('.merge-tile').forEach((node) => node.remove());
+            status.textContent = touchScreen() ? 'Проводи пальцем, чтобы сдвинуть плитки' : 'Стрелки или WASD сдвигают плитки';
+            addTile();
+            addTile();
+            paint();
+        };
+
+        board.addEventListener('pointerdown', (e) => {
+            board.setPointerCapture(e.pointerId);
+            start = [e.clientX, e.clientY];
+        });
+        board.addEventListener('pointerup', (e) => {
+            if (!start) return;
+            const dx = e.clientX - start[0];
+            const dy = e.clientY - start[1];
+            start = null;
+            if (Math.max(Math.abs(dx), Math.abs(dy)) < SWIPE) return;
+            if (Math.abs(dx) > Math.abs(dy)) move(dx > 0 ? 'right' : 'left');
+            else move(dy > 0 ? 'down' : 'up');
+        });
+
+        restart();
+        return {
+            el,
+            restart,
+            key(e, down) {
+                const direction = LETTERS[e.key?.toLowerCase()];
+                if (!direction) return;
+                e.preventDefault();
+                if (down) move(direction);
+            }
+        };
+    };
+
+    // --- Повтори цвета ---
+    const simon = (shell) => {
+        const PADS = 4;
+        const el = make(`<div class="simon">
+            <div class="simon-board">${Array.from({ length: PADS }, (_, i) => `<button type="button" class="simon-pad" data-pad="${i}" aria-label="Цвет ${i + 1}"></button>`).join('')}</div>
+            <p class="game-status" role="status"></p>
+            <div class="game-buttons"><button type="button" class="btn btn-primary" data-begin>Начать</button></div>
+        </div>`);
+        const pads = [...el.querySelectorAll('.simon-pad')];
+        const status = el.querySelector('.game-status');
+        const begin = el.querySelector('[data-begin]');
+        let order, step, phase, timer; // Фазы: idle, show, input
+
+        const paintHud = () => shell.hud(`Серия ${order.length ? order.length - (phase === 'input' ? 0 : 1) : 0} · Рекорд ${data.best.simon || 0}`);
+        const flash = (index, ms) => {
+            pads[index].classList.add('lit');
+            setTimeout(() => pads[index].classList.remove('lit'), ms);
+        };
+        const nextRound = () => {
+            order.push(Math.floor(Math.random() * PADS));
+            step = 0;
+            phase = 'show';
+            paintHud();
+            status.textContent = 'Смотри и запоминай';
+            const beat = Math.max(280, 620 - order.length * 25);
+            const showAt = (i) => {
+                if (i === order.length) {
+                    phase = 'input';
+                    status.textContent = 'Повтори';
+                    paintHud();
+                    return;
+                }
+                flash(order[i], beat * 0.65);
+                timer = setTimeout(() => showAt(i + 1), beat);
+            };
+            timer = setTimeout(() => showAt(0), 500);
+        };
+        const restart = () => {
+            clearTimeout(timer);
+            order = [];
+            step = 0;
+            phase = 'idle';
+            begin.hidden = false;
+            begin.textContent = 'Начать';
+            status.textContent = 'Запоминай цвета и повторяй их по порядку';
+            paintHud();
+        };
+
+        el.addEventListener('click', (e) => {
+            const target = e.target.closest('button');
+            if (!target) return;
+            if ('begin' in target.dataset) {
+                restart();
+                begin.hidden = true;
+                nextRound();
+                return;
+            }
+            if (phase !== 'input') return;
+            const index = Number(target.dataset.pad);
+            flash(index, 180);
+            if (index !== order[step]) {
+                const done = order.length - 1;
+                const fresh = record('simon', done);
+                phase = 'idle';
+                status.textContent = `Ошибка. Серия ${done}${fresh ? ', новый рекорд!' : ''}`;
+                begin.hidden = false;
+                begin.textContent = 'Ещё раз';
+                paintHud();
+                return;
+            }
+            step++;
+            if (step < order.length) return;
+            record('simon', order.length);
+            phase = 'show';
+            status.textContent = 'Верно';
+            timer = setTimeout(nextRound, 650);
+        });
+
+        restart();
+        return { el, restart };
+    };
 
     // --- Сапёр ---
     const mines = (shell) => {
@@ -1345,11 +1665,14 @@ window.Games = (() => {
 
     // --- Раздел ---
     const CATALOG = {
+        racing: { title: 'Гонки', text: 'Объезжай машины на трассе', icon: 'car', create: racing, note: () => `Рекорд ${data.best.racing || 0}` },
+        merge: { title: '2048', text: 'Складывай плитки без спешки', icon: 'grid', create: merge, note: () => `Рекорд ${data.best.merge || 0}` },
+        tower: { title: 'Башня', text: 'Ставь блоки в один тап', icon: 'stack', create: tower, note: () => `Рекорд ${data.best.tower || 0}` },
+        simon: { title: 'Повтори цвета', text: 'Запомни и повтори цепочку', icon: 'sparkles', create: simon, note: () => `Рекорд ${data.best.simon || 0}` },
         mines: { title: 'Сапёр', text: 'Открой поле и не подорвись', icon: 'mine', create: mines, note: () => {
             const best = data.best[`mines${data.level.mines ?? 0}`];
             return best === undefined ? 'Рекорда пока нет' : `Рекорд ${clock(best)}`;
         } },
-        snake: { title: 'Змейка', text: 'Собирай и расти, не врезаясь', icon: 'snake', create: snake, note: () => `Рекорд ${data.best.snake || 0}` },
         breakout: { title: 'Арканоид', text: 'Разбей все блоки мячом', icon: 'bricks', create: breakout, note: () => `Рекорд ${data.best.breakout || 0}` },
         pong: { title: 'Pong', text: 'Дуэль с компьютером до 7 очков', icon: 'pong', create: pong, note: () => score(data.wins.pong) },
         blackjack: { title: 'Блэкджек', text: 'Набери 21 и обыграй дилера', icon: 'cards', create: blackjack, note: () => `Фишки ${data.chips}` },

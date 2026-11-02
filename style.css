@@ -1059,6 +1059,72 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 .game-dialog h2 { font-size: 21px; font-weight: 700; letter-spacing: -0.015em; }
 .game-dialog p { color: var(--text-2); }
 
+.merge-board {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    width: min(100%, 440px);
+    aspect-ratio: 1;
+    margin-inline: auto;
+    padding: 4px;
+    border-radius: var(--r-l);
+    background: var(--tint);
+    box-shadow: inset 0 0 0 1px var(--hairline);
+    touch-action: none;
+    -webkit-user-select: none;
+    user-select: none;
+}
+.merge-cell { margin: 4px; border-radius: var(--r-s); background: var(--tint); }
+.merge-tile {
+    position: absolute;
+    top: 4px;
+    left: 4px;
+    width: calc((100% - 8px) / 4);
+    height: calc((100% - 8px) / 4);
+    padding: 4px;
+    transform: translate(calc(var(--c) * 100%), calc(var(--r) * 100%));
+    transition: transform 0.13s ease;
+}
+.merge-tile b {
+    --p: 10;
+    display: grid;
+    place-items: center;
+    height: 100%;
+    border-radius: var(--r-s);
+    background: color-mix(in srgb, var(--accent) calc(var(--p) * 1%), var(--tint-strong));
+    font-size: clamp(20px, 7vw, 32px);
+    font-weight: 740;
+    font-variant-numeric: tabular-nums;
+}
+.merge-tile.bright b { color: var(--accent-ink); }
+.merge-tile.long b { font-size: clamp(16px, 5.4vw, 25px); }
+.merge-tile.fresh b { animation: tile-in 0.2s var(--spring) both; }
+@keyframes tile-in {
+    from { opacity: 0; transform: scale(0.6); }
+    to   { opacity: 1; transform: none; }
+}
+
+.simon-board {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    width: min(100%, 380px);
+    margin-inline: auto;
+    touch-action: manipulation;
+}
+.simon-pad {
+    aspect-ratio: 1;
+    border-radius: var(--r-l);
+    background: var(--c);
+    opacity: 0.42;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.simon-pad.lit { opacity: 1; transform: scale(0.96); box-shadow: 0 0 0 3px var(--text); }
+.simon-pad:nth-child(1) { --c: var(--s-reading); }
+.simon-pad:nth-child(2) { --c: var(--s-planned); }
+.simon-pad:nth-child(3) { --c: var(--s-completed); }
+.simon-pad:nth-child(4) { --c: var(--s-dropped); }
+
 .mines { display: grid; gap: 4px; }
 .mines-tools { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; margin-bottom: 10px; }
 .mines-tools .icon { width: 15px; height: 15px; }
@@ -1214,9 +1280,13 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 
     .dock { left: 16px; right: 16px; width: auto; max-width: none; transform: none; }
     .tabbar { flex: 1; }
-    .tab { flex: 1 1 0; min-width: 0; flex-direction: column; gap: 1px; padding: 5px 0; font-size: 10px; letter-spacing: -0.01em; }
-    .dock { gap: 6px; }
-    .dock-add { width: 50px; }
+    /* Подпись только у открытого раздела: пять подписей в одну строку не помещаются */
+    .tab { flex: 1 1 0; min-width: 0; padding: 0; font-size: 13.5px; }
+    .tab .icon { width: 23px; height: 23px; }
+    .tab span { display: none; }
+    .tab.active { flex: 0 0 auto; padding: 0 16px; }
+    .tab.active span { display: inline; }
+    .dock-add { width: 56px; }
 
     .game-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
     .game-card { padding: 13px; }
@@ -1241,10 +1311,6 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     .sheet-body { padding: 16px 16px calc(20px + var(--safe-bottom)); }
     .detail-hero { padding: 16px; grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
     .detail-cover { width: 104px; }
-}
-
-@media (max-width: 380px) {
-    .tab { font-size: 9.5px; }
 }
 
 @media (hover: none) {
