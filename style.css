@@ -1039,6 +1039,7 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 .game-actions { display: grid; gap: 12px; }
 .game-buttons, .coins { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
 .game-chips { justify-content: center; }
+.game-chips .chip:disabled { opacity: 0.45; }
 
 /* Высота поля ограничена, чтобы оно целиком помещалось над доком */
 .game-stage {

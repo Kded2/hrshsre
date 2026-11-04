@@ -2793,6 +2793,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (state.theme === 'auto') applyTheme();
     });
     window.addEventListener('resize', moveTabPill);
+    // На телефоне ширина вкладок меняется после загрузки шрифтов и раскрытия подписи, подсветка должна идти следом
+    const tabWatch = new ResizeObserver(moveTabPill);
+    tabbar.querySelectorAll('.tab').forEach((tab) => tabWatch.observe(tab));
+    document.fonts?.ready.then(moveTabPill);
     window.addEventListener('hashchange', applyRoute);
 
     // Несколько вкладок: подхватываем изменения из соседней

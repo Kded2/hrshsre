@@ -16,6 +16,7 @@ window.Games = (() => {
         chips: 1000,
         race: { cash: 0, xp: 0, stage: 1, pick: 1, parts: {} },
         f1: { round: 0, points: {}, tyre: 1, titles: 0 },
+        drift: { open: 1, track: 0, best: {}, lap: {}, ghost: {} },
         ...read()
     };
     const save = () => {
@@ -3385,202 +3386,894 @@ window.Games = (() => {
     };
 
     // --- Дрифт ---
+    // Кольцевые трассы задаются опорными точками на сетке 10 на 10, между ними строится гладкая кривая
+    const DRIFT_LAPS = 3;
+    const DRIFT_TRACKS = [
+        {
+            name: 'Кольцо', text: 'Парк, широкие повороты', grip: 1, offGrip: 0.75, offSpeed: 0.55, half: 74,
+            ground: '#4a9a55', spots: ['#55a860', '#3f8c4b'], road: '#3a3b44', runoff: '#cdb987', smoke: 'rgba(235, 235, 240, 0.5)', dust: 'rgba(120, 90, 50, 0.45)',
+            props: ['tree', 'tree', 'bush', 'stand'],
+            points: [[2, 1], [8, 1], [9.3, 2.6], [9, 5], [7.2, 6], [8.6, 8], [7, 9.3], [3, 9.3], [1, 8], [1.3, 5.2], [2.9, 4], [1, 2.6]]
+        },
+        {
+            name: 'Порт', text: 'Ночной город, тесные шпильки', grip: 1, offGrip: 0.8, offSpeed: 0.5, half: 66, night: true,
+            ground: '#262a38', spots: ['#2e3344', '#1f2230'], road: '#2c2d37', runoff: '#3b4054', smoke: 'rgba(220, 225, 240, 0.45)', dust: 'rgba(160, 165, 185, 0.35)',
+            props: ['block', 'block', 'lamp'],
+            points: [[1, 1], [5, 1.2], [6, 3], [9, 2.5], [9.3, 6], [7, 7], [8.5, 9], [4.2, 9.3], [3, 7], [1, 8.6], [0.8, 5], [2.5, 3.6]]
+        },
+        {
+            name: 'Перевал', text: 'Снег, машину легко сносит', grip: 0.6, offGrip: 0.55, offSpeed: 0.5, half: 80,
+            ground: '#e6eef5', spots: ['#f6fafd', '#d3dfea'], road: '#4f5763', runoff: '#c9d6e2', smoke: 'rgba(255, 255, 255, 0.75)', dust: 'rgba(255, 255, 255, 0.8)',
+            props: ['pine', 'pine', 'rock'],
+            points: [[2, 1], [6, 0.8], [9, 2], [8, 4], [9.2, 6.5], [6.5, 9], [4.5, 7.2], [2, 9], [0.8, 6], [2.5, 4.5], [1, 3]]
+        },
+        {
+            name: 'Каньон', text: 'Песок, вылет сильно тормозит', grip: 0.85, offGrip: 0.6, offSpeed: 0.38, half: 72,
+            ground: '#d9b477', spots: ['#e4c288', '#c8a266'], road: '#4b4642', runoff: '#c49a5e', smoke: 'rgba(240, 225, 200, 0.5)', dust: 'rgba(200, 150, 90, 0.6)',
+            props: ['cactus', 'rock', 'rock'],
+            points: [[1.5, 1], [8.5, 1.2], [9, 4], [6, 4.6], [6.5, 6.2], [9, 7.5], [8, 9.3], [2, 9], [1, 6.5], [3, 5], [1, 3.5]]
+        }
+    ];
+    const DRIFT_RIVALS = [
+        { name: 'Кобальт', color: '#2f6bff', skill: 1, kind: 'sport' },
+        { name: 'Сирокко', color: '#e63946', skill: 0.96, kind: 'sedan' },
+        { name: 'Вихрь', color: '#2ec4b6', skill: 0.92, kind: 'sport' }
+    ];
+    const lapClock = (seconds) => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
+
     const drift = arcade(({ hud, held, finish }) => {
         const W = 360;
         const H = 480;
-        const CAR_Y = H * 0.72;
-        const START_SPEED = 270;
-        const TOP_SPEED = 380;
-        const STEER = 3.4;
-        const GRIP = 1.8;
-        const MIN_SLIP = 0.16; // Меньший занос дрифтом не считается
-        const smoke = particles(90);
+        const GRID = 250;
+        const STEP = 10;
+        const WALL_GAP = 62; // Отбойник стоит дальше края асфальта
+        const TOP = 420;
+        const ENGINE = 430;
+        const TURN = 2.6;
+        const GRIP = 5.5;
+        const SLIP = 0.28; // С какого угла заноса начисляются очки
+        const LAT = 950; // Боковое ускорение соперников в поворотах
+        const SKILL = [0.78, 0.85, 0.95];
+        const CAR_R = 17;
+        const LIGHTS = 3;
+        const NOS_BTN = { x: W - 34, y: H - 150, r: 27 };
+        const smoke = particles(160);
+        const sparks = particles(60);
         const touches = new Map();
-        let x, y, heading, course, speed, points, combo, chain, slip, camX, skids, grace;
+        let track, pts, length, path, edges, kerbs, zones, props, barrier, map, cones;
+        let me, rivals, ghost, record, recordAt, lapStart, lapBest, clock, lights, steer, score, pending, combo, chain, calm, nitro, nitroOn, popups, skids, shake, camX, camY, zoom, finished;
 
-        const wave = (at) => Math.min(80, 42 + at * 0.004);
-        const centre = (at) => wave(at) * (Math.sin(at * 0.0034) + 0.6 * Math.sin(at * 0.0085 + 1));
-        const half = (at) => Math.max(58, 76 - at * 0.0015);
-        const offRoad = () => Math.abs(x - centre(y)) > half(y);
-        const wrapTile = (value) => ((value % 240) + 240) % 240;
-        const toX = (wx) => W / 2 + wx - camX;
-        const toY = (wy) => CAR_Y - (wy - y);
-        const paintHud = () => hud(`Очки ${Math.floor(points)} · x${combo}`);
-        const grass = () => sprite('drift-grass', 240, 240, (c, w, h) => {
-            c.fillStyle = '#3f8f50';
+        // --- Трасса ---
+        const catmull = (a, b, c, d, t) => {
+            const t2 = t * t;
+            const t3 = t2 * t;
+            return 0.5 * (2 * b + (c - a) * t + (2 * a - 5 * b + 4 * c - d) * t2 + (3 * b - a - 3 * c + d) * t3);
+        };
+        const build = () => {
+            const ctrl = track.points.map(([px, py]) => [px * GRID, py * GRID]);
+            const dense = [];
+            ctrl.forEach((_, i) => {
+                const [a, b, c, d] = [-1, 0, 1, 2].map((k) => ctrl[(i + k + ctrl.length) % ctrl.length]);
+                for (let t = 0; t < 1; t += 1 / 60) dense.push([catmull(a[0], b[0], c[0], d[0], t), catmull(a[1], b[1], c[1], d[1], t)]);
+            });
+            // Равный шаг между точками, чтобы скорость и расстояния считались просто
+            pts = [];
+            let carry = 0;
+            for (let i = 0; i < dense.length; i++) {
+                const [ax, ay] = dense[i];
+                const [bx, by] = dense[(i + 1) % dense.length];
+                const span = Math.hypot(bx - ax, by - ay);
+                let at = carry;
+                while (at < span) {
+                    pts.push({ x: ax + (bx - ax) * at / span, y: ay + (by - ay) * at / span });
+                    at += STEP;
+                }
+                carry = at - span;
+            }
+            length = pts.length * STEP;
+            // Старт ставится на середину самой длинной прямой
+            const bendAt = (i) => {
+                const a = pts[(i - 4 + pts.length) % pts.length];
+                const b = pts[i];
+                const c = pts[(i + 4) % pts.length];
+                return Math.abs(Math.atan2(c.y - b.y, c.x - b.x) - Math.atan2(b.y - a.y, b.x - a.x)) % (Math.PI * 2);
+            };
+            let bestRun = 0;
+            let bestEnd = 0;
+            let run = 0;
+            for (let i = 0; i < pts.length * 2; i++) {
+                const bend = bendAt(i % pts.length);
+                run = bend < 0.03 || bend > Math.PI * 2 - 0.03 ? run + 1 : 0;
+                if (run > bestRun) {
+                    bestRun = Math.min(run, pts.length);
+                    bestEnd = i;
+                }
+            }
+            const shift = (bestEnd - Math.floor(bestRun * 0.35) + pts.length * 2) % pts.length;
+            pts = [...pts.slice(shift), ...pts.slice(0, shift)];
+            pts.forEach((p, i) => {
+                const prev = pts[(i - 1 + pts.length) % pts.length];
+                const next = pts[(i + 1) % pts.length];
+                const tx = next.x - prev.x;
+                const ty = next.y - prev.y;
+                const size = Math.hypot(tx, ty);
+                p.tx = tx / size;
+                p.ty = ty / size;
+                p.nx = -p.ty; // Нормаль смотрит влево по ходу движения
+                p.ny = p.tx;
+                p.angle = Math.atan2(p.tx, -p.ty);
+                p.dist = i * STEP;
+            });
+            pts.forEach((p, i) => {
+                const a = pts[(i - 3 + pts.length) % pts.length];
+                const b = pts[(i + 3) % pts.length];
+                let turn = b.angle - a.angle;
+                turn = Math.atan2(Math.sin(turn), Math.cos(turn));
+                p.curve = turn / (STEP * 6);
+            });
+            pts.forEach((p, i) => {
+                let limit = TOP;
+                for (let k = 0; k <= 30; k += 3) limit = Math.min(limit, Math.sqrt(LAT / Math.max(1e-4, Math.abs(pts[(i + k) % pts.length].curve))));
+                p.limit = limit;
+            });
+
+            path = new Path2D();
+            pts.forEach((p, i) => (i ? path.lineTo(p.x, p.y) : path.moveTo(p.x, p.y)));
+            path.closePath();
+            const half = track.half;
+            edges = [1, -1].map((side) => {
+                const line = new Path2D();
+                pts.forEach((p, i) => (i ? line.lineTo(p.x + p.nx * half * side, p.y + p.ny * half * side) : line.moveTo(p.x + p.nx * half * side, p.y + p.ny * half * side)));
+                line.closePath();
+                return line;
+            });
+            // Поребрики только в поворотах
+            kerbs = new Path2D();
+            for (const side of [1, -1]) {
+                let open = false;
+                pts.forEach((p) => {
+                    const bend = Math.abs(p.curve) > 0.0028;
+                    const px = p.x + p.nx * (half + 5) * side;
+                    const py = p.y + p.ny * (half + 5) * side;
+                    if (bend && open) kerbs.lineTo(px, py);
+                    else if (bend) kerbs.moveTo(px, py);
+                    open = bend;
+                });
+            }
+            // Зоны дрифта: два самых крутых поворота подальше друг от друга
+            const order = pts.map((p, i) => [Math.abs(p.curve), i]).sort((a, b) => b[0] - a[0]);
+            const centres = [];
+            for (const [, i] of order) {
+                if (centres.every((c) => Math.min(Math.abs(c - i), pts.length - Math.abs(c - i)) > pts.length / 4)) centres.push(i);
+                if (centres.length === 2) break;
+            }
+            zones = centres.map((centre) => {
+                const zone = new Path2D();
+                for (let k = -22; k <= 22; k++) {
+                    const p = pts[(centre + k + pts.length) % pts.length];
+                    p.zone = true;
+                    if (k === -22) zone.moveTo(p.x, p.y);
+                    else zone.lineTo(p.x, p.y);
+                }
+                return { path: zone, at: pts[centre] };
+            });
+
+            // Окружение: только там, где рядом нет другой части трассы
+            const coarse = pts.filter((_, i) => i % 3 === 0);
+            const clearance = (x, y) => Math.min(...coarse.map((p) => Math.hypot(p.x - x, p.y - y)));
+            barrier = [];
+            for (let i = 0; i < pts.length; i += 2) {
+                for (const side of [1, -1]) {
+                    const p = pts[i];
+                    const x = p.x + p.nx * (half + WALL_GAP + 6) * side;
+                    const y = p.y + p.ny * (half + WALL_GAP + 6) * side;
+                    if (clearance(x, y) > half + WALL_GAP) barrier.push({ x, y });
+                }
+            }
+            props = [];
+            const seed = DRIFT_TRACKS.indexOf(track) * 71;
+            for (let i = 0; i < pts.length; i += 6) {
+                for (const side of [1, -1]) {
+                    const roll = noise(seed + i * 1.7 + side);
+                    if (roll < 0.35) continue;
+                    const p = pts[i];
+                    const kind = track.props[Math.floor(noise(seed + i + side * 3) * track.props.length)];
+                    const away = half + WALL_GAP + (kind === 'stand' ? 46 : 40 + noise(i + side * 9) * 170);
+                    const x = p.x + p.nx * away * side;
+                    const y = p.y + p.ny * away * side;
+                    if (clearance(x, y) > half + WALL_GAP + 24) props.push({ x, y, kind, angle: kind === 'stand' ? p.angle + (side > 0 ? -Math.PI / 2 : Math.PI / 2) : noise(i) * 6 });
+                }
+            }
+            // Схема для угла экрана
+            const xs = pts.map((p) => p.x);
+            const ys = pts.map((p) => p.y);
+            const left = Math.min(...xs);
+            const top = Math.min(...ys);
+            const size = Math.max(Math.max(...xs) - left, Math.max(...ys) - top);
+            map = { left, top, size };
+        };
+        const placeCones = () => {
+            cones = [];
+            const order = pts.map((p, i) => [Math.abs(p.curve), i]).sort((a, b) => b[0] - a[0]);
+            const used = [];
+            for (const [, i] of order) {
+                if (used.some((u) => Math.min(Math.abs(u - i), pts.length - Math.abs(u - i)) < 40)) continue;
+                used.push(i);
+                const p = pts[i];
+                const inside = Math.sign(p.curve) || 1; // Конусы стоят у внутреннего края, на апексе
+                for (const k of [-4, 0, 4]) {
+                    const q = pts[(i + k + pts.length) % pts.length];
+                    cones.push({ x: q.x + q.nx * inside * (track.half - 16), y: q.y + q.ny * inside * (track.half - 16), vx: 0, vy: 0, a: 0, spin: 0, hit: false });
+                }
+                if (used.length === 4) break;
+            }
+        };
+        // Ближайшая точка трассы ищется рядом с прошлой, так быстрее
+        const locate = (x, y, hint) => {
+            let best = hint;
+            let bestD = Infinity;
+            for (let k = -40; k <= 40; k++) {
+                const i = (hint + k + pts.length) % pts.length;
+                const d = (pts[i].x - x) ** 2 + (pts[i].y - y) ** 2;
+                if (d < bestD) {
+                    bestD = d;
+                    best = i;
+                }
+            }
+            const p = pts[best];
+            return { i: best, lat: (x - p.x) * p.nx + (y - p.y) * p.ny };
+        };
+        const sample = (dist, offset) => {
+            const at = wrap(dist, length) / STEP;
+            const a = pts[Math.floor(at) % pts.length];
+            const b = pts[(Math.floor(at) + 1) % pts.length];
+            const t = at - Math.floor(at);
+            return { x: a.x + (b.x - a.x) * t + a.nx * offset, y: a.y + (b.y - a.y) * t + a.ny * offset, p: a };
+        };
+        const wrap = (value, size) => ((value % size) + size) % size;
+        const progress = (car) => car.lap * length + car.dist;
+        const placeOf = () => 1 + rivals.filter((rival) => progress(rival) > progress(me)).length;
+        const drift_ = () => data.drift;
+
+        // --- Очки ---
+        const popup = (text, color) => popups.push({ text, color, life: 1.2 });
+        const bank = () => {
+            if (pending >= 1) {
+                score += Math.round(pending);
+                popup(`+${Math.round(pending)}`, '#4cd97b');
+            }
+            pending = 0;
+            chain = 0;
+            combo = 1;
+        };
+        const lose = (text) => {
+            if (pending >= 1) popup(text, '#ff3b4e');
+            pending = 0;
+            chain = 0;
+            combo = 1;
+        };
+
+        const paintHud = () => hud(`P${placeOf()} · Круг ${clamp(me.lap + 1, 1, DRIFT_LAPS)}/${DRIFT_LAPS} · ${score}`);
+
+        const endRace = () => {
+            bank();
+            finished = true;
+            const place = placeOf();
+            const store = drift_();
+            const index = DRIFT_TRACKS.indexOf(track);
+            const fresh = score > (store.best[index] || 0);
+            if (fresh) store.best[index] = score;
+            const opened = place <= 3 && store.open === index + 1 && index + 1 < DRIFT_TRACKS.length;
+            if (opened) store.open++;
+            save();
+            const title = place === 1 ? `${track.name}: победа` : `${track.name}: P${place}`;
+            const lap = lapBest ? `, лучший круг ${lapClock(lapBest)}` : '';
+            finish(title, `Очки дрифта ${score}${fresh ? ', рекорд трассы' : ''}${lap}${opened ? `. Открыта трасса «${DRIFT_TRACKS[index + 1].name}»` : place > 3 ? '. Финишируй в тройке, чтобы открыть следующую трассу' : ''}`);
+        };
+
+        const lapDone = () => {
+            const time = clock - lapStart;
+            const store = drift_();
+            const index = DRIFT_TRACKS.indexOf(track);
+            if (!store.lap[index] || time < store.lap[index]) {
+                store.lap[index] = Math.round(time * 10) / 10;
+                store.ghost[index] = record;
+                ghost = record;
+                save();
+                popup(`Лучший круг ${lapClock(time)}`, '#ffd23f');
+            }
+            lapBest = Math.min(lapBest || Infinity, time);
+            record = [];
+            recordAt = 0;
+            lapStart = clock;
+        };
+
+        // --- Движение ---
+        const driveMe = (dt) => {
+            const sides = [...touches.values()];
+            const pinch = sides.includes(-1) && sides.includes(1);
+            const left = held.left || (sides.includes(-1) && !pinch);
+            const right = held.right || (sides.includes(1) && !pinch);
+            const hand = held.down || pinch;
+            const want = (right ? 1 : 0) - (left ? 1 : 0);
+            steer += clamp(want - steer, -8 * dt, 8 * dt);
+
+            const spot = locate(me.x, me.y, me.i);
+            const off = Math.abs(spot.lat) > track.half;
+            const fx = Math.sin(me.a);
+            const fy = -Math.cos(me.a);
+            const sx = Math.cos(me.a);
+            const sy = Math.sin(me.a);
+            let forward = me.vx * fx + me.vy * fy;
+            let lateral = me.vx * sx + me.vy * sy;
+            const boost = (nitroOn || held.up) && nitro > 0 && !hand;
+            if (boost) nitro = Math.max(0, nitro - 0.3 * dt);
+            if (!nitro) nitroOn = false;
+            const top = TOP * (boost ? 1.3 : 1) * (off ? track.offSpeed : 1);
+            if (hand) forward -= 170 * dt;
+            else forward += ENGINE * (boost ? 1.6 : 1) * (1 - forward / top) * dt;
+            if (forward > top) forward -= (forward - top) * 2 * dt;
+            forward -= Math.abs(lateral) * 0.5 * dt; // В заносе машина теряет скорость
+            me.a += steer * TURN * clamp(forward / 140, -1, 1) * (hand ? 1.25 : 1) * dt;
+            const grip = GRIP * track.grip * (off ? track.offGrip : 1) * (hand ? 0.25 : 1);
+            lateral *= Math.exp(-grip * dt);
+            me.vx = fx * forward + sx * lateral;
+            me.vy = fy * forward + sy * lateral;
+            me.x += me.vx * dt;
+            me.y += me.vy * dt;
+            me.speed = Math.hypot(me.vx, me.vy);
+            me.slip = Math.atan2(Math.abs(lateral), Math.max(1, forward));
+            me.boost = boost;
+            me.hand = hand;
+
+            // Отбойник
+            const now = locate(me.x, me.y, spot.i);
+            const p = pts[now.i];
+            const wall = track.half + WALL_GAP;
+            if (Math.abs(now.lat) > wall) {
+                const side = Math.sign(now.lat);
+                me.x -= p.nx * (Math.abs(now.lat) - wall) * side;
+                me.y -= p.ny * (Math.abs(now.lat) - wall) * side;
+                const into = (me.vx * p.nx + me.vy * p.ny) * side;
+                if (into > 0) {
+                    // Гасится только удар в стену, скольжение вдоль неё почти не тормозит
+                    me.vx -= p.nx * into * side * 1.3;
+                    me.vy -= p.ny * into * side * 1.3;
+                    const keep = 1 - Math.min(0.4, into / 600);
+                    me.vx *= keep;
+                    me.vy *= keep;
+                }
+                if (into > 60) {
+                    shake = 0.25;
+                    lose('Удар');
+                    for (let n = 0; n < 12; n++) sparks.add(me.x + p.nx * side * 14, me.y + p.ny * side * 14, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, 0.4, 2, '#ffb84a');
+                }
+            }
+
+            // Круги считаются по переходу через старт в обе стороны
+            const before = me.i;
+            me.i = now.i;
+            if (before > pts.length * 0.7 && me.i < pts.length * 0.3) {
+                me.lap++;
+                if (me.lap > 0) lapDone();
+                if (me.lap >= DRIFT_LAPS) return endRace();
+                if (me.lap === 0) lapStart = clock;
+            } else if (before < pts.length * 0.3 && me.i > pts.length * 0.7) me.lap--;
+            me.dist = me.i * STEP;
+
+            // Очки за занос
+            if (off) {
+                lose('Вылет');
+                calm = 0;
+            } else if (me.slip > SLIP && me.speed > 150) {
+                chain += dt;
+                calm = 0;
+                combo = Math.min(5, 1 + Math.floor(chain / 1.2));
+                pending += me.slip * me.speed * dt * 0.08 * combo * (p.zone ? 2 : 1);
+                nitro = Math.min(1, nitro + dt * 0.12);
+            } else if (pending) {
+                calm += dt;
+                if (calm > 0.35) bank();
+            }
+
+            // Дым и следы
+            if (me.slip > SLIP || off) {
+                for (const side of [-1, 1]) {
+                    const wx = me.x - fx * 22 + sx * 13 * side;
+                    const wy = me.y - fy * 22 + sy * 13 * side;
+                    const last = me.wheel[side];
+                    if (!off && last && Math.hypot(wx - last[0], wy - last[1]) < 30) skids.push([last[0], last[1], wx, wy]);
+                    me.wheel[side] = [wx, wy];
+                    if (Math.random() < 0.6) smoke.add(wx, wy, (Math.random() - 0.5) * 40, (Math.random() - 0.5) * 40, 0.9, 5, off ? track.dust : track.smoke, 26);
+                }
+                if (skids.length > 700) skids.splice(0, 100);
+            } else me.wheel = {};
+            if (boost) smoke.add(me.x - fx * 34, me.y - fy * 34, -fx * 80, -fy * 80, 0.25, 6, Math.random() < 0.5 ? '#ffd23f' : '#ff7a1a', -14);
+        };
+
+        const driveRival = (rival, dt) => {
+            const p = pts[Math.floor(wrap(rival.dist, length) / STEP)];
+            const want = p.limit * rival.pace;
+            rival.speed += clamp(want - rival.speed, -520 * dt, 300 * dt);
+            const target = clamp(-Math.sign(p.curve) * Math.min(1, Math.abs(p.curve) * 260) * track.half * 0.5, -track.half * 0.6, track.half * 0.6) + rival.lane;
+            rival.offset += clamp(target - rival.offset, -40 * dt, 40 * dt);
+            const before = rival.dist;
+            rival.dist = wrap(rival.dist + rival.speed * dt, length);
+            if (rival.dist < before) rival.lap++;
+            const at = sample(rival.dist, rival.offset);
+            rival.x = at.x;
+            rival.y = at.y;
+            const slip = clamp(p.curve * rival.speed * 0.9, -0.55, 0.55); // Соперники тоже идут боком
+            rival.a += clamp(Math.atan2(Math.sin(p.angle + slip - rival.a), Math.cos(p.angle + slip - rival.a)), -6 * dt, 6 * dt);
+            if (Math.abs(slip) > 0.3 && Math.random() < 0.5) smoke.add(rival.x - Math.sin(rival.a) * 22, rival.y + Math.cos(rival.a) * 22, 0, 0, 0.8, 4, track.smoke, 22);
+            // Толкаются с игроком
+            const dx = me.x - rival.x;
+            const dy = me.y - rival.y;
+            const gap = Math.hypot(dx, dy);
+            if (gap < CAR_R * 2 && gap > 0) {
+                const nx = dx / gap;
+                const ny = dy / gap;
+                me.x += nx * (CAR_R * 2 - gap);
+                me.y += ny * (CAR_R * 2 - gap);
+                const rvx = Math.sin(rival.a) * rival.speed;
+                const rvy = -Math.cos(rival.a) * rival.speed;
+                const closing = (rvx - me.vx) * nx + (rvy - me.vy) * ny;
+                if (closing > 0) {
+                    me.vx += nx * closing * 0.6;
+                    me.vy += ny * closing * 0.6;
+                    rival.speed = Math.max(0, rival.speed - closing * 0.4);
+                    if (closing > 40) lose('Контакт');
+                }
+            }
+        };
+
+        const moveCones = (dt) => {
+            for (const cone of cones) {
+                if (!cone.hit && Math.hypot(cone.x - me.x, cone.y - me.y) < CAR_R + 6) {
+                    cone.hit = true;
+                    cone.vx = me.vx * 0.9 + (Math.random() - 0.5) * 120;
+                    cone.vy = me.vy * 0.9 + (Math.random() - 0.5) * 120;
+                    cone.spin = (Math.random() - 0.5) * 20;
+                    score = Math.max(0, score - 50);
+                    popup('Конус −50', '#ff8c1a');
+                    lose('Конус');
+                }
+                if (!cone.hit) continue;
+                cone.x += cone.vx * dt;
+                cone.y += cone.vy * dt;
+                cone.a += cone.spin * dt;
+                const slow = Math.exp(-2.5 * dt);
+                cone.vx *= slow;
+                cone.vy *= slow;
+                cone.spin *= slow;
+            }
+        };
+
+        // --- Отрисовка ---
+        const groundTile = () => sprite(`drift-ground-${track.name}`, 128, 128, (c, w, h) => {
+            c.fillStyle = track.ground;
             c.fillRect(0, 0, w, h);
-            for (let i = 0; i < 260; i++) {
-                c.fillStyle = noise(i) > 0.5 ? '#4a9c5a' : '#378246';
-                c.fillRect(noise(i + 0.3) * w, noise(i + 0.7) * h, 2, 4);
+            for (let i = 0; i < 140; i++) {
+                c.fillStyle = track.spots[i % 2];
+                c.fillRect(noise(i + 0.2) * w, noise(i + 0.6) * h, 2 + noise(i) * 3, 2 + noise(i + 0.9) * 3);
             }
         });
-        const edge = (side) => {
-            const line = [];
-            for (let sy = -30; sy <= H + 30; sy += 12) {
-                const at = y + CAR_Y - sy;
-                line.push([toX(centre(at) + side * half(at)), sy]);
+        const roadTile = () => sprite(`drift-road-${track.name}`, 128, 128, (c, w, h) => {
+            c.fillStyle = track.road;
+            c.fillRect(0, 0, w, h);
+            for (let i = 0; i < 500; i++) {
+                c.fillStyle = i % 2 ? 'rgba(255, 255, 255, 0.06)' : 'rgba(0, 0, 0, 0.12)';
+                c.fillRect(noise(i + 0.4) * w, noise(i + 0.8) * h, 1.4, 1.4);
             }
-            return line;
+        });
+        const patterns = {};
+        const pattern = (c, image) => {
+            const key = image === roadTile() ? 'road' : 'ground';
+            if (patterns[key]?.image !== image) {
+                const fill = c.createPattern(image, 'repeat');
+                fill.setTransform?.(new DOMMatrix([1 / SPRITE_SCALE, 0, 0, 1 / SPRITE_SCALE, 0, 0]));
+                patterns[key] = { image, fill };
+            }
+            return patterns[key].fill;
         };
-        const trace = (c, line) => {
+        const standSprite = () => sprite('drift-stand', 120, 44, (c, w, h) => {
+            c.fillStyle = 'rgba(0, 0, 0, 0.25)';
+            c.fillRect(4, 6, w - 4, h - 4);
+            c.fillStyle = '#c9ced8';
+            c.fillRect(0, 0, w, 10);
+            c.fillStyle = '#2b2f3c';
+            c.fillRect(0, 10, w, h - 12);
+            crowd(c, 3, 13, w - 6, h - 16);
+        });
+        const coneSprite = () => sprite('drift-cone', 16, 16, (c) => {
+            c.fillStyle = 'rgba(0, 0, 0, 0.25)';
             c.beginPath();
-            line.forEach(([px, py], i) => (i ? c.lineTo(px, py) : c.moveTo(px, py)));
+            c.arc(9, 9.5, 6.5, 0, Math.PI * 2);
+            c.fill();
+            blob(c, 8, 8, 6.5, '#ff7a1a');
+            c.strokeStyle = '#fff';
+            c.lineWidth = 1.6;
+            c.beginPath();
+            c.arc(8, 8, 3.6, 0, Math.PI * 2);
+            c.stroke();
+        });
+        const tyreSprite = () => sprite('drift-tyre', 14, 14, (c) => {
+            c.fillStyle = '#121216';
+            c.beginPath();
+            c.arc(7, 7, 6.5, 0, Math.PI * 2);
+            c.fill();
+            c.strokeStyle = '#3a3a44';
+            c.lineWidth = 2;
+            c.beginPath();
+            c.arc(7, 7, 3.5, 0, Math.PI * 2);
+            c.stroke();
+        });
+        const glow = (c, x, y, r, color) => {
+            const fill = c.createRadialGradient(x, y, 0, x, y, r);
+            fill.addColorStop(0, color);
+            fill.addColorStop(1, 'rgba(0, 0, 0, 0)');
+            c.fillStyle = fill;
+            c.fillRect(x - r, y - r, r * 2, r * 2);
+        };
+        const carAt = (c, image, x, y, a, alpha = 1) => {
+            c.save();
+            c.globalAlpha = alpha;
+            c.translate(x, y);
+            c.rotate(a);
+            stamp(c, image, 0, 0);
+            c.restore();
+        };
+        const ghostAt = () => {
+            if (!ghost?.length || me.lap < 0) return null;
+            const at = (clock - lapStart) / 0.1;
+            const a = ghost[Math.floor(at)];
+            const b = ghost[Math.floor(at) + 1];
+            if (!a || !b) return null;
+            const t = at - Math.floor(at);
+            return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] / 100];
+        };
+        const paintWorld = (c, theme) => {
+            const view = { left: camX - W / 2 / zoom - 60, right: camX + W / 2 / zoom + 60, top: camY - H * 0.6 / zoom - 60, bottom: camY + H * 0.5 / zoom + 60 };
+            const inView = (x, y) => x > view.left && x < view.right && y > view.top && y < view.bottom;
+            c.fillStyle = pattern(c, groundTile());
+            c.fillRect(view.left, view.top, view.right - view.left, view.bottom - view.top);
+            c.lineJoin = 'round';
+            c.lineCap = 'round';
+            const half = track.half;
+            c.strokeStyle = track.runoff;
+            c.lineWidth = half * 2 + 70;
+            c.stroke(path);
+            c.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+            c.lineWidth = half * 2 + 14;
+            c.stroke(path);
+            c.strokeStyle = pattern(c, roadTile());
+            c.lineWidth = half * 2;
+            c.stroke(path);
+            c.strokeStyle = 'rgba(0, 0, 0, 0.12)'; // Накатанная траектория
+            c.lineWidth = half * 0.8;
+            c.stroke(path);
+            for (const edge of edges) {
+                c.strokeStyle = 'rgba(245, 245, 248, 0.9)';
+                c.lineWidth = 3;
+                c.stroke(edge);
+            }
+            c.lineCap = 'butt';
+            c.lineWidth = 10;
+            c.setLineDash([14, 14]);
+            c.strokeStyle = '#e8343f';
+            c.stroke(kerbs);
+            c.lineDashOffset = 14;
+            c.strokeStyle = '#f6f6f8';
+            c.stroke(kerbs);
+            c.setLineDash([]);
+            c.lineDashOffset = 0;
+            for (const zone of zones) {
+                c.strokeStyle = 'rgba(255, 140, 26, 0.16)';
+                c.lineWidth = half * 2 - 8;
+                c.stroke(zone.path);
+                c.setLineDash([6, 18]);
+                c.strokeStyle = 'rgba(255, 200, 80, 0.7)';
+                c.lineWidth = 4;
+                c.stroke(zone.path);
+                c.setLineDash([]);
+            }
+            // Старт и стартовая решётка
+            const start = pts[0];
+            c.save();
+            c.translate(start.x, start.y);
+            c.rotate(start.angle);
+            for (let i = 0; i < 12; i++) {
+                for (let row = 0; row < 2; row++) {
+                    c.fillStyle = (i + row) % 2 ? '#111' : '#f4f4f6';
+                    c.fillRect(-half + i * half / 6, -row * 8, half / 6, 8);
+                }
+            }
+            c.fillStyle = 'rgba(245, 245, 248, 0.8)';
+            for (const [x, y] of [[-26, 50], [26, 50], [-26, 150], [26, 150]]) {
+                c.fillRect(x - 16, y - 2, 32, 3);
+                c.fillRect(x - 16, y - 2, 3, 20);
+                c.fillRect(x + 13, y - 2, 3, 20);
+            }
+            c.restore();
+
+            c.strokeStyle = 'rgba(12, 12, 16, 0.42)';
+            c.lineWidth = 3.5;
+            c.lineCap = 'round';
+            c.beginPath();
+            for (const [ax, ay, bx, by] of skids) {
+                if (!inView(ax, ay)) continue;
+                c.moveTo(ax, ay);
+                c.lineTo(bx, by);
+            }
+            c.stroke();
+
+            for (const tyre of barrier) if (inView(tyre.x, tyre.y)) stamp(c, tyreSprite(), tyre.x, tyre.y);
+            for (const cone of cones) {
+                if (!inView(cone.x, cone.y)) continue;
+                c.save();
+                c.translate(cone.x, cone.y);
+                c.rotate(cone.a);
+                stamp(c, coneSprite(), 0, 0);
+                c.restore();
+            }
+            const shadow = ghostAt();
+            if (shadow) carAt(c, topCar('sport', '#d7dbe8'), shadow[0], shadow[1], shadow[2], 0.35);
+            smoke.draw(c);
+            for (const rival of rivals) if (inView(rival.x, rival.y)) carAt(c, topCar(rival.kind, rival.color), rival.x, rival.y, rival.a);
+            carAt(c, topCar('sport', theme.accent), me.x, me.y, me.a);
+            sparks.draw(c);
+            for (const item of props) {
+                if (!inView(item.x, item.y)) continue;
+                if (item.kind === 'stand') {
+                    c.save();
+                    c.translate(item.x, item.y);
+                    c.rotate(item.angle);
+                    stamp(c, standSprite(), 0, 0);
+                    c.restore();
+                } else stamp(c, topProp(item.kind), item.x, item.y);
+            }
+            return inView;
+        };
+        const paintNight = (c, inView) => {
+            c.globalCompositeOperation = 'lighter';
+            for (const item of props) if (item.kind === 'lamp' && inView(item.x, item.y)) glow(c, item.x, item.y, 90, 'rgba(255, 210, 130, 0.35)');
+            for (const car of [me, ...rivals]) {
+                if (!inView(car.x, car.y)) continue;
+                const fx = Math.sin(car.a);
+                const fy = -Math.cos(car.a);
+                c.save();
+                c.translate(car.x, car.y);
+                c.rotate(car.a);
+                const beam = c.createLinearGradient(0, -30, 0, -190);
+                beam.addColorStop(0, 'rgba(255, 244, 200, 0.42)');
+                beam.addColorStop(1, 'rgba(255, 244, 200, 0)');
+                c.fillStyle = beam;
+                c.beginPath();
+                c.moveTo(-14, -30);
+                c.lineTo(-70, -190);
+                c.lineTo(70, -190);
+                c.lineTo(14, -30);
+                c.closePath();
+                c.fill();
+                c.restore();
+                glow(c, car.x - fx * 30, car.y - fy * 30, 18, 'rgba(255, 40, 60, 0.6)');
+            }
+            c.globalCompositeOperation = 'source-over';
+        };
+        const panel = (c, x, y, w, h) => {
+            c.fillStyle = 'rgba(12, 12, 20, 0.62)';
+            roundRect(c, x, y, w, h, 12);
+            c.fill();
+        };
+        const text = (c, value, x, y, size, color = '#fff', align = 'left', weight = 800) => {
+            c.fillStyle = color;
+            c.font = `${weight} ${size}px system-ui, sans-serif`;
+            c.textAlign = align;
+            c.textBaseline = 'middle';
+            c.fillText(value, x, y);
+        };
+        const paintHudLayer = (c, theme) => {
+            panel(c, 8, 8, 118, 70);
+            text(c, `Круг ${clamp(me.lap + 1, 1, DRIFT_LAPS)}/${DRIFT_LAPS}`, 18, 22, 13);
+            text(c, `P${placeOf()}`, 116, 22, 15, '#ffd23f', 'right');
+            text(c, me.lap >= 0 ? lapClock(clock - lapStart) : '0:00.0', 18, 40, 16);
+            const best = drift_().lap[DRIFT_TRACKS.indexOf(track)];
+            text(c, best ? `Лучший ${lapClock(best)}` : 'Лучшего круга нет', 18, 56, 10.5, 'rgba(255, 255, 255, 0.7)', 'left', 600);
+            c.fillStyle = 'rgba(255, 255, 255, 0.2)';
+            roundRect(c, 18, 66, 98, 5, 2.5);
+            c.fill();
+            if (nitro > 0.02) {
+                c.fillStyle = nitroOn || held.up ? '#ffd23f' : '#5a8cff';
+                roundRect(c, 18, 66, 98 * nitro, 5, 2.5);
+                c.fill();
+            }
+
+            const size = 70;
+            const left = W - size - 8;
+            panel(c, left, 8, size, size);
+            const toMap = (x, y) => [left + 6 + (x - map.left) / map.size * (size - 12), 14 + (y - map.top) / map.size * (size - 12)];
+            c.strokeStyle = 'rgba(255, 255, 255, 0.75)';
+            c.lineWidth = 2.5;
+            c.beginPath();
+            pts.forEach((p, i) => {
+                if (i % 6) return;
+                const [mx, my] = toMap(p.x, p.y);
+                if (i) c.lineTo(mx, my);
+                else c.moveTo(mx, my);
+            });
+            c.closePath();
+            c.stroke();
+            for (const car of [...rivals, me]) {
+                const [mx, my] = toMap(car.x, car.y);
+                c.fillStyle = car === me ? theme.accent : car.color;
+                c.beginPath();
+                c.arc(mx, my, car === me ? 4 : 2.6, 0, Math.PI * 2);
+                c.fill();
+            }
+
+            if (pending >= 1) {
+                panel(c, W / 2 - 64, 88, 128, 34);
+                text(c, `+${Math.round(pending)}  x${combo}`, W / 2, 105, 16, '#ffd23f', 'center');
+            }
+            if (pts[me.i].zone) text(c, 'ЗОНА ДРИФТА x2', W / 2, 134, 12, '#ff9b3d', 'center');
+            popups.forEach((item, i) => {
+                c.globalAlpha = Math.min(1, item.life * 2);
+                text(c, item.text, W / 2, 168 + i * 20 - (1.2 - item.life) * 20, 15, item.color, 'center');
+            });
+            c.globalAlpha = 1;
+
+            if (lights > 0) {
+                panel(c, W / 2 - 70, 190, 140, 44);
+                const lit = Math.min(3, Math.floor((LIGHTS - lights) / 0.9) + 1);
+                for (let i = 0; i < 3; i++) {
+                    c.fillStyle = i < lit ? '#ff2436' : '#3a3b45';
+                    c.beginPath();
+                    c.arc(W / 2 - 34 + i * 34, 212, 12, 0, Math.PI * 2);
+                    c.fill();
+                }
+            } else {
+                c.globalAlpha = nitro > 0.05 ? 1 : 0.45;
+                c.fillStyle = nitroOn || held.up ? '#ffd23f' : 'rgba(12, 12, 20, 0.6)';
+                c.beginPath();
+                c.arc(NOS_BTN.x, NOS_BTN.y, NOS_BTN.r, 0, Math.PI * 2);
+                c.fill();
+                text(c, 'NOS', NOS_BTN.x, NOS_BTN.y + 1, 12, nitroOn || held.up ? '#17131f' : '#fff', 'center');
+                c.globalAlpha = 1;
+            }
         };
 
         return {
             width: W,
             height: H,
-            hintKeys: 'Стрелки влево и вправо. Заноси машину в поворотах и не вылетай с трассы',
-            hintTouch: 'Держи левую или правую часть экрана. Заноси машину в поворотах и не вылетай с трассы',
+            vertical: true,
+            hintKeys: 'Стрелки: руль влево и вправо, вниз ручник, вверх нитро. Газ нажат сам. Три круга против трёх соперников',
+            hintTouch: 'Держи левую или правую часть экрана, обе сразу это ручник. Газ нажат сам. Три круга против трёх соперников',
+            options(mode) {
+                if (mode === 'pause') return '';
+                const store = drift_();
+                const index = DRIFT_TRACKS.indexOf(track);
+                return `<div class="chips game-chips">${DRIFT_TRACKS.map((item, i) => `<button type="button" class="chip small ${i === index ? 'active' : ''}" data-track="${i}" ${i < store.open ? '' : 'disabled'}>${i < store.open ? item.name : `${item.name} · закрыта`}</button>`).join('')}</div>
+                    <p class="game-note">${track.text}. Рекорд ${store.best[index] || 0}${store.lap[index] ? ` · лучший круг ${lapClock(store.lap[index])}` : ''}</p>
+                    ${chipsRow('level', LEVELS, data.level.drift ?? 1)}`;
+            },
+            pick(target, overlay, refresh) {
+                const chip = target.closest('[data-track], [data-level]');
+                if (!chip || chip.disabled) return;
+                if (chip.dataset.track) drift_().track = Number(chip.dataset.track);
+                else data.level.drift = Number(chip.dataset.level);
+                save();
+                this.reset();
+                refresh();
+            },
             reset() {
-                x = centre(0);
-                y = 0;
-                heading = 0;
-                course = 0;
-                speed = START_SPEED;
-                points = 0;
+                const store = drift_();
+                const next = DRIFT_TRACKS[clamp(store.track, 0, store.open - 1)];
+                if (next !== track) {
+                    track = next;
+                    build();
+                }
+                placeCones();
+                const level = SKILL[data.level.drift ?? 1];
+                const grid = (dist, offset) => {
+                    const at = sample(dist, offset);
+                    return { x: at.x, y: at.y, a: at.p.angle, dist, lap: -1 };
+                };
+                me = { ...grid(length - 50, 26), vx: 0, vy: 0, speed: 0, slip: 0, i: Math.floor((length - 50) / STEP), wheel: {} };
+                rivals = DRIFT_RIVALS.map((rival, n) => {
+                    const [dist, offset] = [[length - 50, -26], [length - 150, 26], [length - 150, -26]][n];
+                    return { ...rival, ...grid(dist, offset), offset, lane: offset * 0.3, speed: 0, pace: rival.skill * level * (1 + DRIFT_TRACKS.indexOf(track) * 0.015) };
+                });
+                const index = DRIFT_TRACKS.indexOf(track);
+                ghost = store.ghost[index] || null;
+                record = [];
+                recordAt = 0;
+                lapStart = 0;
+                lapBest = 0;
+                clock = 0;
+                lights = LIGHTS;
+                steer = 0;
+                score = 0;
+                pending = 0;
                 combo = 1;
                 chain = 0;
-                slip = 0;
-                camX = x;
+                calm = 0;
+                nitro = 0.3;
+                nitroOn = false;
+                popups = [];
                 skids = [];
-                grace = 0;
+                shake = 0;
+                camX = me.x;
+                camY = me.y;
+                zoom = 1;
+                finished = false;
                 smoke.clear();
+                sparks.clear();
                 touches.clear();
                 paintHud();
             },
             release() {
                 touches.clear();
             },
+            action() {
+                if (nitro > 0) nitroOn = !nitroOn;
+                return true;
+            },
             pointer(type, px, py, id) {
-                if (type === 'pointerup' || type === 'pointercancel') touches.delete(id);
-                else if (type === 'pointerdown') touches.set(id, px < W / 2 ? -1 : 1);
+                if (type === 'pointerup' || type === 'pointercancel') return touches.delete(id);
+                if (type !== 'pointerdown') return;
+                if (Math.hypot(px - NOS_BTN.x, py - NOS_BTN.y) < NOS_BTN.r + 6) {
+                    if (nitro > 0) nitroOn = !nitroOn;
+                    return;
+                }
+                touches.set(id, px < W / 2 ? -1 : 1);
             },
             update(dt) {
-                const sides = [...touches.values()];
-                const left = held.left || sides.includes(-1);
-                const right = held.right || sides.includes(1);
-                const want = (right ? 1 : 0) - (left ? 1 : 0);
-                heading += want * STEER * dt;
-                if (!want) heading += (course - heading) * Math.min(1, 3.5 * dt);
-                heading = clamp(heading, course - 0.95, course + 0.95);
-                course = clamp(course + clamp(heading - course, -GRIP * dt, GRIP * dt), -1.2, 1.2);
-                x += Math.sin(course) * speed * dt;
-                y += Math.cos(course) * speed * dt;
-                slip = Math.abs(heading - course);
-                camX += (x - camX) * Math.min(1, 6 * dt);
-
-                const out = offRoad();
-                if (out) {
-                    speed -= 260 * dt;
-                    grace += dt;
-                    combo = 1;
-                    chain = 0;
-                } else {
-                    speed = Math.min(TOP_SPEED, speed + 22 * dt);
-                    grace = 0;
-                    if (slip > MIN_SLIP) {
-                        chain += dt;
-                        combo = Math.min(5, 1 + Math.floor(chain / 1.1));
-                        points += slip * speed * dt * 0.12 * combo;
-                    } else {
-                        chain = Math.max(0, chain - dt * 0.7);
-                        if (!chain) combo = 1;
+                popups = popups.filter((item) => (item.life -= dt) > 0);
+                smoke.step(dt);
+                sparks.step(dt);
+                shake = Math.max(0, shake - dt);
+                if (lights > 0) {
+                    lights -= dt;
+                    return;
+                }
+                clock += dt;
+                rivals.forEach((rival) => driveRival(rival, dt));
+                driveMe(dt);
+                if (finished) return;
+                moveCones(dt);
+                if (me.lap >= 0) {
+                    recordAt -= dt;
+                    if (recordAt <= 0) {
+                        record.push([Math.round(me.x), Math.round(me.y), Math.round(me.a * 100)]);
+                        recordAt += 0.1;
                     }
                 }
-                points += speed * dt * 0.01;
-
-                if (slip > MIN_SLIP || out) {
-                    const back = Math.sin(heading) * 26;
-                    const rear = Math.cos(heading) * 26;
-                    for (const side of [-1, 1]) {
-                        const wx = x - back + Math.cos(heading) * 13 * side;
-                        const wy = y - rear - Math.sin(heading) * 13 * side;
-                        if (!out) skids.push({ x: wx, y: wy, side });
-                        smoke.add(toX(wx), toY(wy), Math.random() * 40 - 20, Math.random() * 30, 0.7, 5, out ? 'rgba(146, 110, 66, 0.55)' : 'rgba(235, 235, 240, 0.5)', 24);
-                    }
-                    if (skids.length > 260) skids.splice(0, 40);
-                }
-                smoke.step(dt, -Math.sin(course) * speed, Math.cos(course) * speed);
+                const lead = 0.35;
+                camX += (me.x + me.vx * lead - camX) * Math.min(1, 5 * dt);
+                camY += (me.y + me.vy * lead - camY) * Math.min(1, 5 * dt);
+                zoom += (1 - me.speed / TOP * 0.18 - zoom) * Math.min(1, 2 * dt);
                 paintHud();
-                if (speed < 110 || grace > 1.5) {
-                    const score = Math.floor(points);
-                    const fresh = record('drift', score);
-                    finish('Вылет с трассы', `Очки ${score}${fresh ? ', новый рекорд' : ''}`);
-                }
             },
             draw(c, theme) {
-                const tile = grass();
-                const fromX = -wrapTile(camX);
-                const fromY = wrapTile(y) - 240;
-                for (let px = fromX - 240; px < W; px += 240) {
-                    for (let py = fromY; py < H; py += 240) c.drawImage(tile, px, py, 241, 241);
-                }
-
-                const firstBlock = Math.floor((y - H) / 90);
-                for (let block = firstBlock; block < firstBlock + 12; block++) {
-                    for (const side of [-1, 1]) {
-                        const at = block * 90 + noise(block + side) * 60;
-                        const px = toX(centre(at) + side * (half(at) + 42 + noise(block * 3 + side) * 90));
-                        stamp(c, topProp(noise(block * 5 + side) > 0.35 ? 'tree' : 'bush'), px, toY(at));
-                    }
-                }
-
-                const left = edge(-1);
-                const right = edge(1);
-                c.fillStyle = '#c8b582';
-                trace(c, [...left.map(([px, py]) => [px - 16, py]), ...right.reverse().map(([px, py]) => [px + 16, py])]);
-                c.fill();
-                c.fillStyle = '#35363f';
-                trace(c, [...left, ...right]);
-                c.fill();
-                right.reverse();
-                c.lineWidth = 7;
-                for (const [color, offset] of [['#e8343f', 0], ['#fff', 18]]) {
-                    c.strokeStyle = color;
-                    c.setLineDash([18, 18]);
-                    c.lineDashOffset = -y + offset;
-                    trace(c, left);
-                    c.stroke();
-                    trace(c, right);
-                    c.stroke();
-                }
-                c.setLineDash([]);
-
-                c.strokeStyle = 'rgba(10, 10, 14, 0.5)';
-                c.lineWidth = 3.5;
-                for (const side of [-1, 1]) {
-                    let open = false;
-                    let last = null;
-                    c.beginPath();
-                    for (const mark of skids) {
-                        if (mark.side !== side) continue;
-                        const gap = last && Math.hypot(mark.x - last.x, mark.y - last.y) > 34;
-                        if (open && !gap) c.lineTo(toX(mark.x), toY(mark.y));
-                        else c.moveTo(toX(mark.x), toY(mark.y));
-                        open = true;
-                        last = mark;
-                    }
-                    c.stroke();
-                }
-
-                smoke.draw(c);
-                c.save();
-                c.translate(toX(x), CAR_Y);
-                c.rotate(heading);
-                stamp(c, topCar('sport', theme.accent), 0, 0);
+                const jolt = shake ? [(Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8] : [0, 0];
+                const camera = () => {
+                    c.save();
+                    c.translate(W / 2 + jolt[0], H * 0.56 + jolt[1]);
+                    c.scale(zoom, zoom);
+                    c.translate(-camX, -camY);
+                };
+                camera();
+                const inView = paintWorld(c, theme);
                 c.restore();
-
-                if (combo > 1) {
-                    c.fillStyle = 'rgba(12, 12, 20, 0.6)';
-                    roundRect(c, W / 2 - 54, 12, 108, 36, 14);
-                    c.fill();
-                    c.fillStyle = '#ffd23f';
-                    c.font = '800 19px system-ui, sans-serif';
-                    c.textAlign = 'center';
-                    c.textBaseline = 'middle';
-                    c.fillText(`ДРИФТ x${combo}`, W / 2, 31);
+                if (track.night) {
+                    // Ночью всё затемняется, а фары и фонари светят поверх
+                    c.fillStyle = 'rgba(4, 6, 18, 0.45)';
+                    c.fillRect(0, 0, W, H);
+                    camera();
+                    paintNight(c, inView);
+                    c.restore();
                 }
+                paintHudLayer(c, theme);
             }
         };
     });
@@ -3590,7 +4283,7 @@ window.Games = (() => {
         racing: { title: 'Гонки', text: 'Этапы, гараж и прокачка', icon: 'car', create: racing, note: () => `Этап ${data.race.stage} · Гонщик ${driverLevel().level} ур.` },
         grandprix: { title: 'Гран-при', text: 'Сезон из 6 этапов, шины и пит-стопы', icon: 'f1', create: grandprix, note: () => `Этап ${data.f1.round + 1} из ${GP_ROUNDS.length} · Очки ${data.f1.points['Ты'] || 0}${data.f1.titles ? ` · Титулы ${data.f1.titles}` : ''}` },
         lights: { title: 'Старт', text: 'Поймай момент, когда погаснут огни', icon: 'lights', create: lights, note: () => (data.best.lights === undefined ? 'Рекорда пока нет' : `Рекорд ${data.best.lights} мс`) },
-        drift: { title: 'Дрифт', text: 'Заноси машину на извилистой трассе', icon: 'wheel', create: drift, note: () => `Рекорд ${data.best.drift || 0}` },
+        drift: { title: 'Дрифт', text: 'Кольцевые трассы, соперники и призрак', icon: 'wheel', create: drift, note: () => `Трасс открыто ${data.drift.open} из ${DRIFT_TRACKS.length} · Рекорд ${Math.max(0, ...Object.values(data.drift.best))}` },
         merge: { title: '2048', text: 'Складывай плитки без спешки', icon: 'grid', create: merge, note: () => `Рекорд ${data.best.merge || 0}` },
         tower: { title: 'Башня', text: 'Ставь блоки в один тап', icon: 'stack', create: tower, note: () => `Рекорд ${data.best.tower || 0}` },
         simon: { title: 'Повтори цвета', text: 'Запомни и повтори цепочку', icon: 'sparkles', create: simon, note: () => `Рекорд ${data.best.simon || 0}` },
