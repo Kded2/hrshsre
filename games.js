@@ -136,7 +136,7 @@ window.Games = (() => {
 
     // --- Каркас игр на холсте ---
     const arcade = (build) => (shell) => {
-        const held = { left: false, right: false };
+        const held = { left: false, right: false, up: false, down: false, space: false };
         const el = make(`<div class="game-stage">
             <canvas class="game-canvas"></canvas>
             <div class="game-overlay" hidden></div>
@@ -248,7 +248,7 @@ window.Games = (() => {
                 if (!key) return;
                 const vertical = key === 'up' || key === 'down';
                 if (vertical && !game.vertical) return; // В остальных играх стрелки листают страницу
-                if (vertical || key === 'left' || key === 'right') held[key] = down; // Отпускание важно и под окном паузы
+                if (vertical || key !== 'pause') held[key] = down; // Отпускание важно и под окном паузы
                 if (!overlay.hidden) return;
                 e.preventDefault();
                 if (!down || e.repeat) return;
@@ -3429,8 +3429,11 @@ window.Games = (() => {
         const WALL_GAP = 62; // Отбойник стоит дальше края асфальта
         const TOP = 420;
         const ENGINE = 430;
-        const TURN = 2.6;
+        const TURN = 2.9;
         const GRIP = 5.5;
+        const ALIGN = 2.6; // Без руля машина сама выравнивается по ходу движения
+        const MAX_SLIP = 1.05; // Дальше машину не разворачивает
+        const COUNTER = 1.7; // Контрруление быстрее возвращает сцепление
         const SLIP = 0.28; // С какого угла заноса начисляются очки
         const LAT = 950; // Боковое ускорение соперников в поворотах
         const SKILL = [0.78, 0.85, 0.95];
@@ -3691,12 +3694,12 @@ window.Games = (() => {
         // --- Движение ---
         const driveMe = (dt) => {
             const sides = [...touches.values()];
-            const pinch = sides.includes(-1) && sides.includes(1);
-            const left = held.left || (sides.includes(-1) && !pinch);
-            const right = held.right || (sides.includes(1) && !pinch);
-            const hand = held.down || pinch;
-            const want = (right ? 1 : 0) - (left ? 1 : 0);
-            steer += clamp(want - steer, -8 * dt, 8 * dt);
+            const pinch = sides.some((value) => value < 0) && sides.some((value) => value > 0);
+            const hand = held.space || held.down || pinch;
+            // Палец дальше от центра поворачивает сильнее, клавиши всегда до упора
+            let want = (held.right ? 1 : 0) - (held.left ? 1 : 0);
+            if (!want && sides.length && !pinch) want = sides[sides.length - 1];
+            steer += clamp(want - steer, -10 * dt, 10 * dt);
 
             const spot = locate(me.x, me.y, me.i);
             const off = Math.abs(spot.lat) > track.half;
@@ -3710,12 +3713,20 @@ window.Games = (() => {
             if (boost) nitro = Math.max(0, nitro - 0.3 * dt);
             if (!nitro) nitroOn = false;
             const top = TOP * (boost ? 1.3 : 1) * (off ? track.offSpeed : 1);
-            if (hand) forward -= 170 * dt;
+            if (hand) forward -= 150 * dt;
             else forward += ENGINE * (boost ? 1.6 : 1) * (1 - forward / top) * dt;
             if (forward > top) forward -= (forward - top) * 2 * dt;
             forward -= Math.abs(lateral) * 0.5 * dt; // В заносе машина теряет скорость
-            me.a += steer * TURN * clamp(forward / 140, -1, 1) * (hand ? 1.25 : 1) * dt;
-            const grip = GRIP * track.grip * (off ? track.offGrip : 1) * (hand ? 0.25 : 1);
+            // На большой скорости руль острее не становится, иначе машину крутит
+            const speedTurn = clamp(forward / 120, -1, 1) * (1 - Math.max(0, forward - 260) / 900);
+            me.a += steer * TURN * speedTurn * (0.7 + track.grip * 0.3) * (hand ? 1.5 : 1) * dt;
+            const course = Math.atan2(me.vx, -me.vy);
+            let slide = Math.atan2(Math.sin(course - me.a), Math.cos(course - me.a));
+            if (Math.abs(want) < 0.1 && !hand && forward > 60) me.a += slide * Math.min(1, ALIGN * (2 - track.grip) * dt); // На скользком помогаем сильнее
+            if (Math.abs(slide) > MAX_SLIP && forward > 60) me.a = course - Math.sign(slide) * MAX_SLIP;
+            slide = Math.atan2(Math.sin(course - me.a), Math.cos(course - me.a));
+            const countering = steer * slide > 0.05 && Math.abs(slide) > 0.15;
+            const grip = GRIP * track.grip * (off ? track.offGrip : 1) * (hand ? 0.3 : 1) * (countering ? COUNTER : 1);
             lateral *= Math.exp(-grip * dt);
             me.vx = fx * forward + sx * lateral;
             me.vy = fy * forward + sy * lateral;
@@ -4146,8 +4157,8 @@ window.Games = (() => {
             width: W,
             height: H,
             vertical: true,
-            hintKeys: 'Стрелки: руль влево и вправо, вниз ручник, вверх нитро. Газ нажат сам. Три круга против трёх соперников',
-            hintTouch: 'Держи левую или правую часть экрана, обе сразу это ручник. Газ нажат сам. Три круга против трёх соперников',
+            hintKeys: 'Стрелки влево и вправо руль, пробел ручник, стрелка вверх нитро. Газ нажат сам. Три круга против трёх соперников',
+            hintTouch: 'Держи левую или правую часть экрана, чем дальше от центра, тем круче поворот. Обе сразу это ручник. Газ нажат сам',
             options(mode) {
                 if (mode === 'pause') return '';
                 const store = drift_();
@@ -4214,18 +4225,16 @@ window.Games = (() => {
             release() {
                 touches.clear();
             },
-            action() {
-                if (nitro > 0) nitroOn = !nitroOn;
-                return true;
-            },
+            action: () => true, // Пробел это ручник, пауза на нём не нужна
             pointer(type, px, py, id) {
                 if (type === 'pointerup' || type === 'pointercancel') return touches.delete(id);
-                if (type !== 'pointerdown') return;
-                if (Math.hypot(px - NOS_BTN.x, py - NOS_BTN.y) < NOS_BTN.r + 6) {
+                if (type === 'pointermove' && !touches.has(id)) return;
+                if (type === 'pointerdown' && Math.hypot(px - NOS_BTN.x, py - NOS_BTN.y) < NOS_BTN.r + 6) {
                     if (nitro > 0) nitroOn = !nitroOn;
                     return;
                 }
-                touches.set(id, px < W / 2 ? -1 : 1);
+                const from = (px - W / 2) / (W * 0.32);
+                touches.set(id, Math.sign(from || -1) * clamp(Math.abs(from), 0.45, 1));
             },
             update(dt) {
                 popups = popups.filter((item) => (item.life -= dt) > 0);
