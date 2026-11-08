@@ -17,6 +17,7 @@ window.Games = (() => {
         race: { cash: 0, xp: 0, stage: 1, pick: 1, parts: {} },
         f1: { round: 0, points: {}, tyre: 1, titles: 0 },
         drift: { open: 1, track: 0, best: {}, lap: {}, ghost: {} },
+        sound: true,
         ...read()
     };
     const save = () => {
@@ -92,6 +93,152 @@ window.Games = (() => {
         c.closePath();
     };
 
+    // --- Картинки и звук ---
+    // Картинки и звуки из бесплатных наборов Kenney (CC0), список в assets/LICENSE-kenney.txt
+    const images = {};
+    const picture = (src) => {
+        let image = images[src];
+        if (!image) {
+            image = images[src] = new Image();
+            image.onload = () => current?.redraw?.(); // Поле перерисуется, как только картинка придёт
+            image.src = src;
+        }
+        return image.complete && image.naturalWidth ? image : null;
+    };
+    const ATLAS = window.GAME_ATLAS || {};
+    // Картинка из листа Kenney по центру точки. Пока лист не загрузился, возвращает false и игра рисует свой вариант
+    const kenney = (c, sheet, name, x, y, w, h) => {
+        const image = picture(`assets/racing/${sheet}.png`);
+        const box = ATLAS[sheet]?.[name];
+        if (!image || !box) return false;
+        c.drawImage(image, box[0], box[1], box[2], box[3], x - w / 2, y - h / 2, w, h);
+        return true;
+    };
+    const kenneySize = (sheet, name) => ATLAS[sheet]?.[name] || [0, 0, 1, 1];
+    const art = (name) => picture(`assets/arcade/${name}.png`);
+    // Кирпич тянется только серединой, края со скосом остаются как есть
+    const sliced = (c, image, x, y, w, h, edge = 0.22) => {
+        const sw = image.naturalWidth;
+        const sh = image.naturalHeight;
+        const cut = Math.min(sw * edge, sw / 2 - 1);
+        const side = Math.min(w / 2, h * cut / sh);
+        c.drawImage(image, 0, 0, cut, sh, x, y, side, h);
+        c.drawImage(image, cut, 0, sw - cut * 2, sh, x + side, y, w - side * 2, h);
+        c.drawImage(image, sw - cut, 0, cut, sh, x + w - side, y, side, h);
+    };
+    ['racing/vehicles', 'racing/objects', 'gp/sky-day', 'gp/sky-night', 'arcade/paddle-blue', 'arcade/paddle-red', 'arcade/ball-grey', 'arcade/coin', 'arcade/star', 'arcade/brick-armor',
+        ...['blue', 'green', 'grey', 'orange', 'pink', 'red', 'yellow'].map((color) => `arcade/brick-${color}`)].forEach((name) => picture(`assets/${name}.png`));
+
+    const Sound = (() => {
+        const NAMES = ['click', 'select', 'win', 'lose', 'drop', 'tick', 'boost', 'coin', 'crash', 'bump', 'brick', 'paddle', 'cone', 'wall', 'card', 'slide', 'shuffle', 'chip', 'chips'];
+        // Если браузер не умеет ogg, вместо файла звучит короткий синтезированный звук
+        const FALLBACK = {
+            click: [900, 0.04, 'square'], select: [660, 0.08], win: [880, 0.25], lose: [180, 0.3, 'sawtooth'], drop: [320, 0.08], tick: [1200, 0.03, 'square'],
+            boost: [240, 0.35, 'sawtooth'], coin: [1320, 0.09], crash: [90, 0.35, 'sawtooth'], bump: [160, 0.1, 'square'], brick: [700, 0.06, 'square'],
+            paddle: [300, 0.06], cone: [420, 0.07, 'square'], wall: [120, 0.12, 'square'], card: [500, 0.03, 'triangle'], slide: [400, 0.05, 'triangle'],
+            shuffle: [350, 0.12, 'triangle'], chip: [1800, 0.04, 'triangle'], chips: [1600, 0.12, 'triangle']
+        };
+        const buffers = {};
+        const motors = new Set();
+        let ctx = null;
+        let master = null;
+        const muted = () => data.sound === false;
+        const load = () => NAMES.forEach(async (name) => {
+            try {
+                const response = await fetch(`assets/sounds/${name}.ogg`);
+                buffers[name] = await ctx.decodeAudioData(await response.arrayBuffer());
+            } catch (e) {
+                buffers[name] = null;
+            }
+        });
+        // Браузер пускает звук только после касания страницы
+        const unlock = () => {
+            if (!ctx) {
+                const Context = window.AudioContext || window.webkitAudioContext;
+                if (!Context) return;
+                ctx = new Context();
+                master = ctx.createGain();
+                master.gain.value = 0.8;
+                master.connect(ctx.destination);
+                load();
+            }
+            if (ctx.state === 'suspended') ctx.resume();
+        };
+        const tone = (frequency, duration, type = 'sine', volume = 0.12) => {
+            if (!ctx || muted()) return;
+            const osc = ctx.createOscillator();
+            const gain = ctx.createGain();
+            const now = ctx.currentTime;
+            osc.type = type;
+            osc.frequency.value = frequency;
+            gain.gain.setValueAtTime(volume, now);
+            gain.gain.exponentialRampToValueAtTime(0.0001, now + duration);
+            osc.connect(gain).connect(master);
+            osc.start(now);
+            osc.stop(now + duration + 0.02);
+        };
+        const play = (name, { volume = 1, rate = 1 } = {}) => {
+            if (!ctx || muted()) return;
+            const buffer = buffers[name];
+            if (buffer === null) {
+                const [frequency, duration, type] = FALLBACK[name];
+                return tone(frequency * rate, duration, type, 0.08 * volume);
+            }
+            if (!buffer) return; // Ещё грузится
+            const source = ctx.createBufferSource();
+            const gain = ctx.createGain();
+            source.buffer = buffer;
+            source.playbackRate.value = rate * (0.94 + Math.random() * 0.12);
+            gain.gain.value = volume;
+            source.connect(gain).connect(master);
+            source.start();
+        };
+        // Шипение шин: зацикленный шум через полосовой фильтр
+        const hiss = (pitch = 1800) => {
+            let nodes = null;
+            const self = {
+                set(amount) {
+                    if (!ctx || muted() || amount < 0.02) {
+                        if (nodes) nodes.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.05);
+                        return;
+                    }
+                    if (!nodes) {
+                        const length = ctx.sampleRate;
+                        const buffer = ctx.createBuffer(1, length, ctx.sampleRate);
+                        const samples = buffer.getChannelData(0);
+                        for (let i = 0; i < length; i++) samples[i] = Math.random() * 2 - 1;
+                        const source = ctx.createBufferSource();
+                        const filter = ctx.createBiquadFilter();
+                        const gain = ctx.createGain();
+                        source.buffer = buffer;
+                        source.loop = true;
+                        filter.type = 'bandpass';
+                        filter.frequency.value = pitch;
+                        filter.Q.value = 1.4;
+                        gain.gain.value = 0;
+                        source.connect(filter).connect(gain).connect(master);
+                        source.start();
+                        nodes = { source, gain };
+                        motors.add(self);
+                    }
+                    nodes.gain.gain.setTargetAtTime(Math.min(0.12, amount * 0.12), ctx.currentTime, 0.05);
+                },
+                stop() {
+                    if (!nodes) return;
+                    const old = nodes;
+                    nodes = null;
+                    motors.delete(self);
+                    old.gain.gain.setTargetAtTime(0, ctx.currentTime, 0.04);
+                    setTimeout(() => old.source.stop(), 250);
+                }
+            };
+            return self;
+        };
+        const hush = () => [...motors].forEach((item) => item.stop());
+        for (const type of ['pointerdown', 'keydown']) document.addEventListener(type, unlock, { capture: true });
+        return { play, tone, hiss, hush };
+    })();
+
     // --- Карты ---
     const SUITS = [
         { mark: '♠︎', name: 'пик', red: false },
@@ -100,6 +247,9 @@ window.Games = (() => {
         { mark: '♣︎', name: 'треф', red: false }
     ];
     const RANKS = { 11: 'В', 12: 'Д', 13: 'К', 14: 'Т' };
+    const FACE_SUIT = ['spades', 'hearts', 'diamonds', 'clubs'];
+    const FACE_RANK = { 11: 'J', 12: 'Q', 13: 'K', 14: 'A' };
+    const faceUrl = (card) => `cards/${FACE_SUIT[card.suit]}-${FACE_RANK[card.rank] || card.rank}.png`;
     const rankName = (rank) => RANKS[rank] || String(rank);
     const cardName = (card) => `${rankName(card.rank)} ${SUITS[card.suit].name}`;
 
@@ -116,11 +266,16 @@ window.Games = (() => {
     // Анимация раздачи только у карт, которых ещё не было на экране
     const cardPainter = () => {
         const seen = new Set();
+        let sound = 0;
         const paint = (card, { tag = 'span', attrs = 'role="img"', extra = '' } = {}) => {
             const fresh = seen.has(card.id) ? '' : 'fresh';
             seen.add(card.id);
+            if (fresh && !sound) sound = setTimeout(() => { // Одна раздача — один шорох, а не по звуку на карту
+                sound = 0;
+                Sound.play('card');
+            }, 30);
             const { mark, red } = SUITS[card.suit];
-            return `<${tag} class="pcard ${red ? 'red' : ''} ${fresh} ${extra}" aria-label="${cardName(card)}" ${attrs}>
+            return `<${tag} class="pcard face ${red ? 'red' : ''} ${fresh} ${extra}" style="--face:url('${faceUrl(card)}')" aria-label="${cardName(card)}" ${attrs}>
                 <b>${rankName(card.rank)}</b><i>${mark}</i>
             </${tag}>`;
         };
@@ -155,6 +310,7 @@ window.Games = (() => {
             finish: (title, text, button = 'Ещё раз') => {
                 mode = 'over';
                 cancelAnimationFrame(frame);
+                Sound.hush();
                 draw();
                 show(title, text, button, begin);
             }
@@ -193,6 +349,7 @@ window.Games = (() => {
             mode = 'pause';
             cancelAnimationFrame(frame);
             game.release?.();
+            Sound.hush();
             shell.setPaused(true);
             show('Пауза', 'Игра ждёт тебя', 'Продолжить', run);
         };
@@ -258,18 +415,28 @@ window.Games = (() => {
     };
 
     // --- Арканоид ---
+    const BRICK_ART = ['red', 'orange', 'yellow', 'green', 'blue', 'pink'];
+    const BRICK_TINT = ['#e8343f', '#ff8c1a', '#ffd23f', '#3fbf5f', '#2f9be6', '#ff5fa2'];
+    const POWERS = [
+        { id: 'wide', mark: 'W', text: 'Широкая ракетка', color: '#2f6bff' },
+        { id: 'multi', mark: '×3', text: 'Три мяча', color: '#ff8c1a' },
+        { id: 'slow', mark: 'S', text: 'Медленный мяч', color: '#2ec4b6' },
+        { id: 'life', mark: '+1', text: 'Лишняя жизнь', color: '#e63946' }
+    ];
     const breakout = arcade(({ hud, held, finish }) => {
         const W = 360;
         const H = 480;
         const COLS = 8;
         const ROWS = 6;
         const BRICK_W = 42;
-        const BRICK_H = 16;
+        const BRICK_H = 18;
         const GAP = 2;
         const LEFT = (W - COLS * (BRICK_W + GAP) + GAP) / 2;
         const TOP = 44;
-        const PADDLE = { w: 78, h: 12, y: H - 34 };
-        const R = 6;
+        const PADDLE = { w: 80, h: 16, y: H - 36 };
+        const R = 7;
+        const DROP_CHANCE = 0.16;
+        const POWER_TIME = 10;
         const LAYOUTS = [
             () => true,
             (r, c) => (r + c) % 2 === 0,
@@ -277,9 +444,12 @@ window.Games = (() => {
             (r) => r % 2 === 0,
             (r, c) => c < 3 || c > 4
         ];
-        let bricks, ball, paddleX, lives, level, points, stuck, speed;
+        const bits = particles(180);
+        let bricks, balls, paddleX, lives, level, points, stuck, speed, drops, wide, slow, banner;
 
+        const paddleW = () => PADDLE.w * (wide > 0 ? 1.5 : 1);
         const paintHud = () => hud(`Счёт ${points} · Жизни ${lives} · Уровень ${level}`);
+        const say = (text) => { banner = { text, life: 1.4 }; };
         const loadLevel = () => {
             const layout = LAYOUTS[(level - 1) % LAYOUTS.length];
             const armor = Math.floor((level - 1) / LAYOUTS.length) + (level > 3 ? 1 : 0);
@@ -290,21 +460,46 @@ window.Games = (() => {
                 }
             }
             speed = Math.min(430, 290 + level * 18);
+            drops = [];
+            wide = 0;
+            slow = 0;
             stick();
         };
         const stick = () => {
             stuck = true;
-            ball = { x: paddleX, y: PADDLE.y - R, vx: 0, vy: 0 };
+            balls = [{ x: paddleX, y: PADDLE.y - R, vx: 0, vy: 0 }];
         };
         const launch = () => {
             if (!stuck) return false;
             stuck = false;
             const angle = (Math.random() - 0.5) * 0.7;
-            ball.vx = speed * Math.sin(angle);
-            ball.vy = -speed * Math.cos(angle);
+            balls[0].vx = speed * Math.sin(angle);
+            balls[0].vy = -speed * Math.cos(angle);
+            Sound.play('paddle');
             return true;
         };
-        const hitBricks = () => {
+        const shatter = (brick) => {
+            for (let i = 0; i < 10; i++) {
+                bits.add(brick.x + Math.random() * BRICK_W, brick.y + Math.random() * BRICK_H, (Math.random() - 0.5) * 220, -40 + Math.random() * 160, 0.6, 1.6 + Math.random() * 2.4, BRICK_TINT[brick.row]);
+            }
+        };
+        const power = (drop) => {
+            const kind = POWERS.find((item) => item.id === drop.id);
+            say(kind.text);
+            Sound.play('coin');
+            if (drop.id === 'wide') wide = POWER_TIME;
+            if (drop.id === 'slow') slow = POWER_TIME;
+            if (drop.id === 'life') lives = Math.min(5, lives + 1);
+            if (drop.id === 'multi' && !stuck) {
+                const base = balls[0];
+                for (const turn of [-0.45, 0.45]) {
+                    const angle = Math.atan2(base.vx, -base.vy) + turn;
+                    balls.push({ x: base.x, y: base.y, vx: speed * Math.sin(angle), vy: -speed * Math.cos(angle) });
+                }
+            }
+            paintHud();
+        };
+        const hitBricks = (ball) => {
             for (const brick of bricks) {
                 const nearX = clamp(ball.x, brick.x, brick.x + BRICK_W);
                 const nearY = clamp(ball.y, brick.y, brick.y + BRICK_H);
@@ -317,87 +512,163 @@ window.Games = (() => {
                 if (!brick.hp) {
                     bricks.splice(bricks.indexOf(brick), 1);
                     points += 10 * level;
+                    shatter(brick);
+                    Sound.play('brick', { rate: 1 + (ROWS - brick.row) * 0.06 });
+                    if (Math.random() < DROP_CHANCE) drops.push({ x: brick.x + BRICK_W / 2, y: brick.y + BRICK_H / 2, ...pick(POWERS) });
                     paintHud();
-                }
+                } else Sound.play('bump', { volume: 0.7 });
                 return;
             }
         };
-        const moveBall = (dt) => {
+        const moveBall = (ball, dt) => {
             ball.x += ball.vx * dt;
             ball.y += ball.vy * dt;
-            if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); }
-            if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); }
-            if (ball.y < R) { ball.y = R; ball.vy = Math.abs(ball.vy); }
-            const onPaddle = ball.vy > 0 && ball.y + R >= PADDLE.y && ball.y - R <= PADDLE.y + PADDLE.h && Math.abs(ball.x - paddleX) <= PADDLE.w / 2 + R;
+            if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); Sound.play('wall', { volume: 0.3 }); }
+            if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); Sound.play('wall', { volume: 0.3 }); }
+            if (ball.y < R) { ball.y = R; ball.vy = Math.abs(ball.vy); Sound.play('wall', { volume: 0.3 }); }
+            const half = paddleW() / 2;
+            const onPaddle = ball.vy > 0 && ball.y + R >= PADDLE.y && ball.y - R <= PADDLE.y + PADDLE.h && Math.abs(ball.x - paddleX) <= half + R;
             if (onPaddle) {
-                const angle = clamp((ball.x - paddleX) / (PADDLE.w / 2), -1, 1) * 1.05;
+                const angle = clamp((ball.x - paddleX) / half, -1, 1) * 1.05;
                 ball.y = PADDLE.y - R;
                 ball.vx = speed * Math.sin(angle);
                 ball.vy = -speed * Math.cos(angle);
+                Sound.play('paddle', { volume: 0.8 });
             }
-            hitBricks();
+            hitBricks(ball);
+        };
+        const paintBrick = (c, brick) => {
+            const image = art(brick.hp > 1 ? 'brick-armor' : `brick-${BRICK_ART[brick.row]}`);
+            if (image) return sliced(c, image, brick.x, brick.y, BRICK_W, BRICK_H);
+            c.fillStyle = BRICK_TINT[brick.row];
+            roundRect(c, brick.x, brick.y, BRICK_W, BRICK_H, 4);
+            c.fill();
         };
 
         return {
             width: W,
             height: H,
-            hintKeys: 'Мышь или стрелки, пробел запускает мяч',
-            hintTouch: 'Веди пальцем по полю, тап запускает мяч',
+            hintKeys: 'Мышь или стрелки, пробел запускает мяч. Лови выпавшие бонусы ракеткой',
+            hintTouch: 'Веди пальцем по полю, тап запускает мяч. Лови выпавшие бонусы ракеткой',
             reset() {
                 paddleX = W / 2;
                 lives = 3;
                 level = 1;
                 points = 0;
+                banner = null;
+                bits.clear();
                 loadLevel();
                 paintHud();
             },
             action: launch,
             pointer(type, x) {
-                paddleX = clamp(x, PADDLE.w / 2, W - PADDLE.w / 2);
+                paddleX = clamp(x, paddleW() / 2, W - paddleW() / 2);
                 if (type === 'pointerup') launch();
             },
             update(dt) {
-                if (held.left || held.right) paddleX = clamp(paddleX + (held.right ? 1 : -1) * 420 * dt, PADDLE.w / 2, W - PADDLE.w / 2);
+                const half = paddleW() / 2;
+                if (held.left || held.right) paddleX = clamp(paddleX + (held.right ? 1 : -1) * 420 * dt, half, W - half);
+                paddleX = clamp(paddleX, half, W - half);
+                wide = Math.max(0, wide - dt);
+                slow = Math.max(0, slow - dt);
+                bits.step(dt);
+                if (banner && (banner.life -= dt) <= 0) banner = null;
+                for (const drop of drops) drop.y += 150 * dt;
+                drops = drops.filter((drop) => {
+                    if (drop.y > PADDLE.y - 8 && drop.y < PADDLE.y + PADDLE.h + 8 && Math.abs(drop.x - paddleX) < half + 10) {
+                        power(drop);
+                        return false;
+                    }
+                    return drop.y < H + 20;
+                });
                 if (stuck) {
-                    ball.x = paddleX;
+                    balls[0].x = paddleX;
                     return;
                 }
+                const pace = slow ? 0.65 : 1;
                 const steps = Math.ceil(speed * dt / 4);
-                for (let i = 0; i < steps; i++) moveBall(dt / steps);
-                if (ball.y > H + R) {
+                for (const ball of balls) for (let i = 0; i < steps; i++) moveBall(ball, dt * pace / steps);
+                balls = balls.filter((ball) => ball.y <= H + R);
+                if (!balls.length) {
                     lives--;
                     paintHud();
+                    Sound.play('lose', { volume: 0.6 });
                     if (!lives) {
                         const fresh = record('breakout', points);
                         return finish('Конец игры', `Счёт ${points}, уровень ${level}${fresh ? ', новый рекорд!' : ''}`);
                     }
+                    wide = 0;
+                    slow = 0;
+                    drops = [];
                     stick();
                 }
                 if (!bricks.length) {
                     level++;
+                    Sound.play('win');
+                    say(`Уровень ${level}`);
                     loadLevel();
                     paintHud();
                 }
             },
             draw(c, theme) {
-                for (const brick of bricks) {
-                    c.fillStyle = theme.rows[brick.row];
-                    roundRect(c, brick.x, brick.y, BRICK_W, BRICK_H, 4);
+                c.strokeStyle = theme.strong;
+                c.lineWidth = 1;
+                for (let x = 0; x <= W; x += 30) {
+                    c.beginPath();
+                    c.moveTo(x, 0);
+                    c.lineTo(x, H);
+                    c.stroke();
+                }
+                for (const brick of bricks) paintBrick(c, brick);
+                bits.draw(c);
+                for (const drop of drops) {
+                    c.fillStyle = drop.color;
+                    c.beginPath();
+                    c.arc(drop.x, drop.y, 13, 0, Math.PI * 2);
                     c.fill();
-                    if (brick.hp > 1) {
-                        c.strokeStyle = '#fff';
-                        c.lineWidth = 2;
-                        roundRect(c, brick.x + 2, brick.y + 2, BRICK_W - 4, BRICK_H - 4, 3);
-                        c.stroke();
+                    c.strokeStyle = '#fff';
+                    c.lineWidth = 2.5;
+                    c.stroke();
+                    c.fillStyle = '#fff';
+                    c.font = '800 11px system-ui, sans-serif';
+                    c.textAlign = 'center';
+                    c.textBaseline = 'middle';
+                    c.fillText(drop.mark, drop.x, drop.y + 1);
+                }
+                const width = paddleW();
+                const paddle = art('paddle-blue');
+                if (paddle) sliced(c, paddle, paddleX - width / 2, PADDLE.y, width, PADDLE.h, 0.18);
+                else {
+                    c.fillStyle = theme.accent;
+                    roundRect(c, paddleX - width / 2, PADDLE.y, width, PADDLE.h, 7);
+                    c.fill();
+                }
+                const ball = art('ball-grey');
+                for (const item of balls) {
+                    if (ball) c.drawImage(ball, item.x - R - 1, item.y - R - 1, R * 2 + 2, R * 2 + 2);
+                    else {
+                        c.fillStyle = theme.text;
+                        c.beginPath();
+                        c.arc(item.x, item.y, R, 0, Math.PI * 2);
+                        c.fill();
                     }
                 }
-                c.fillStyle = theme.accent;
-                roundRect(c, paddleX - PADDLE.w / 2, PADDLE.y, PADDLE.w, PADDLE.h, 6);
-                c.fill();
-                c.fillStyle = theme.text;
-                c.beginPath();
-                c.arc(ball.x, ball.y, R, 0, Math.PI * 2);
-                c.fill();
+                const timers = [[wide, 'Широкая'], [slow, 'Медленно']].filter(([time]) => time > 0);
+                timers.forEach(([time, label], i) => {
+                    c.fillStyle = theme.faint;
+                    c.font = '700 11px system-ui, sans-serif';
+                    c.textAlign = 'left';
+                    c.fillText(`${label} ${Math.ceil(time)}`, 8, H - 8 - i * 14);
+                });
+                if (banner) {
+                    c.globalAlpha = Math.min(1, banner.life * 2);
+                    c.fillStyle = theme.text;
+                    c.font = '800 20px system-ui, sans-serif';
+                    c.textAlign = 'center';
+                    c.textBaseline = 'middle';
+                    c.fillText(banner.text, W / 2, H * 0.62);
+                    c.globalAlpha = 1;
+                }
             }
         };
     });
@@ -406,26 +677,28 @@ window.Games = (() => {
     const pong = arcade(({ hud, held, finish }) => {
         const W = 360;
         const H = 480;
-        const R = 6;
-        const PADDLE = { w: 74, h: 10 };
-        const MY_Y = H - 26;
-        const AI_Y = 16;
+        const R = 7;
+        const PADDLE = { w: 76, h: 14 };
+        const MY_Y = H - 28;
+        const AI_Y = 14;
         const GOAL = 7;
+        const CURVE = 170; // Подкрутка: движение ракетки при ударе закручивает мяч
         const SKILL = [
             { speed: 150, miss: 60, ball: 250 },
             { speed: 235, miss: 30, ball: 290 },
             { speed: 340, miss: 10, ball: 330 }
         ];
-        let me, ai, ball, wins, losses, serve, aim, skill;
+        let me, ai, ball, wins, losses, serve, aim, skill, last, swing, trail;
 
         const paintHud = () => hud(`Ты ${wins} : ${losses} Компьютер`);
         const serveBall = (down) => {
             const angle = (Math.random() - 0.5) * 0.9;
-            ball = { x: W / 2, y: H / 2, speed: skill.ball, vx: skill.ball * Math.sin(angle), vy: skill.ball * Math.cos(angle) * (down ? 1 : -1) };
+            ball = { x: W / 2, y: H / 2, speed: skill.ball, vx: skill.ball * Math.sin(angle), vy: skill.ball * Math.cos(angle) * (down ? 1 : -1), spin: 0 };
             serve = 0.8;
             aim = W / 2;
+            trail = [];
         };
-        // Куда придёт мяч с учётом отскоков от стен, плюс ошибка компьютера
+        // Куда придёт мяч с учётом отскоков от стен, плюс ошибка компьютера. Подкрутку он не учитывает
         const predict = () => {
             const span = W - R * 2;
             const flight = (ball.y - AI_Y) / -ball.vy;
@@ -437,23 +710,34 @@ window.Games = (() => {
             ball.speed = Math.min(620, ball.speed * 1.05);
             ball.vx = ball.speed * Math.sin(angle);
             ball.vy = ball.speed * Math.cos(angle) * (down ? 1 : -1);
+            ball.spin = down ? 0 : clamp(swing / 400, -1.6, 1.6);
+            Sound.play('paddle', { rate: 0.9 + ball.speed / 1200 });
             if (!down) predict();
         };
         const goal = (mine) => {
             if (mine) wins++;
             else losses++;
             paintHud();
+            Sound.play(mine ? 'select' : 'lose', { volume: 0.6 });
             if (wins < GOAL && losses < GOAL) return serveBall(!mine);
             const won = wins >= GOAL;
             tally('pong', won ? 'win' : 'lose');
+            if (won) Sound.play('win');
             finish(won ? 'Победа' : 'Поражение', `Счёт ${wins} : ${losses}`);
+        };
+        const paintPaddle = (c, name, x, y, color) => {
+            const image = art(name);
+            if (image) return sliced(c, image, x - PADDLE.w / 2, y, PADDLE.w, PADDLE.h, 0.18);
+            c.fillStyle = color;
+            roundRect(c, x - PADDLE.w / 2, y, PADDLE.w, PADDLE.h, 6);
+            c.fill();
         };
 
         return {
             width: W,
             height: H,
-            hintKeys: 'Мышь или стрелки. Игра идёт до 7 очков',
-            hintTouch: 'Веди пальцем по полю. Игра идёт до 7 очков',
+            hintKeys: 'Мышь или стрелки. Двигай ракетку в момент удара, чтобы закрутить мяч. Игра до 7 очков',
+            hintTouch: 'Веди пальцем по полю. Двигай ракетку в момент удара, чтобы закрутить мяч. Игра до 7 очков',
             options: (mode) => (mode === 'pause' ? '' : chipsRow('level', LEVELS, data.level.pong ?? 1)),
             pick(target, overlay) {
                 const chip = target.closest('[data-level]');
@@ -465,6 +749,8 @@ window.Games = (() => {
             reset() {
                 skill = SKILL[data.level.pong ?? 1];
                 me = W / 2;
+                last = me;
+                swing = 0;
                 ai = W / 2;
                 wins = 0;
                 losses = 0;
@@ -476,6 +762,8 @@ window.Games = (() => {
             },
             update(dt) {
                 if (held.left || held.right) me = clamp(me + (held.right ? 1 : -1) * 430 * dt, PADDLE.w / 2, W - PADDLE.w / 2);
+                swing += ((me - last) / dt - swing) * Math.min(1, dt * 12);
+                last = me;
                 ai = clamp(ai + clamp(aim - ai, -skill.speed * dt, skill.speed * dt), PADDLE.w / 2, W - PADDLE.w / 2);
                 if (serve > 0) {
                     serve -= dt;
@@ -483,10 +771,14 @@ window.Games = (() => {
                     return;
                 }
                 const before = ball.y; // На большой скорости мяч за кадр может проскочить ракетку
+                ball.vx += ball.spin * CURVE * dt;
+                ball.spin *= Math.exp(-1.1 * dt);
                 ball.x += ball.vx * dt;
                 ball.y += ball.vy * dt;
-                if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); }
-                if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); }
+                trail.push([ball.x, ball.y]);
+                if (trail.length > 9) trail.shift();
+                if (ball.x < R) { ball.x = R; ball.vx = Math.abs(ball.vx); Sound.play('wall', { volume: 0.3 }); }
+                if (ball.x > W - R) { ball.x = W - R; ball.vx = -Math.abs(ball.vx); Sound.play('wall', { volume: 0.3 }); }
                 if (ball.vy > 0 && before + R <= MY_Y + PADDLE.h && ball.y + R >= MY_Y && Math.abs(ball.x - me) <= PADDLE.w / 2 + R) {
                     ball.y = MY_Y - R;
                     bounce(me, false);
@@ -508,16 +800,28 @@ window.Games = (() => {
                 c.lineTo(W, H / 2);
                 c.stroke();
                 c.setLineDash([]);
-                c.fillStyle = theme.faint;
-                roundRect(c, ai - PADDLE.w / 2, AI_Y, PADDLE.w, PADDLE.h, 5);
-                c.fill();
-                c.fillStyle = theme.accent;
-                roundRect(c, me - PADDLE.w / 2, MY_Y, PADDLE.w, PADDLE.h, 5);
-                c.fill();
-                c.fillStyle = theme.text;
                 c.beginPath();
-                c.arc(ball.x, ball.y, R, 0, Math.PI * 2);
-                c.fill();
+                c.arc(W / 2, H / 2, 46, 0, Math.PI * 2);
+                c.stroke();
+                paintPaddle(c, 'paddle-red', ai, AI_Y, theme.faint);
+                paintPaddle(c, 'paddle-blue', me, MY_Y, theme.accent);
+                const spun = Math.abs(ball.spin) > 0.25;
+                trail.forEach(([x, y], i) => {
+                    c.globalAlpha = (i + 1) / trail.length * 0.3;
+                    c.fillStyle = spun ? '#ff8c1a' : theme.text;
+                    c.beginPath();
+                    c.arc(x, y, R * (i + 1) / trail.length, 0, Math.PI * 2);
+                    c.fill();
+                });
+                c.globalAlpha = 1;
+                const image = art('ball-grey');
+                if (image) c.drawImage(image, ball.x - R - 1, ball.y - R - 1, R * 2 + 2, R * 2 + 2);
+                else {
+                    c.fillStyle = theme.text;
+                    c.beginPath();
+                    c.arc(ball.x, ball.y, R, 0, Math.PI * 2);
+                    c.fill();
+                }
             }
         };
     });
@@ -1053,7 +1357,19 @@ window.Games = (() => {
             }
         } }
     };
-    const gpProp = (key) => sprite(`gp-${key}`, GP_PROPS[key].w, GP_PROPS[key].h, (c, w, h) => GP_PROPS[key].paint(c, w, h));
+    // Картинки окружения из набора «2.5D Racing Resources» (drummyfish, CC0)
+    Object.assign(GP_PROPS, {
+        oak: { image: 'tree', w: 99, h: 109, size: 1.35, near: 2, spread: 2.2, gap: 5 },
+        forest: { image: 'forest', w: 169, h: 52, size: 0.9, near: 2.6, spread: 1.8, gap: 8 },
+        fir: { image: 'conifer', w: 71, h: 84, size: 1.4, near: 2, spread: 2.4, gap: 4 },
+        cliff: { image: 'cliff', w: 139, h: 145, size: 2.2, near: 2.8, spread: 1.6, gap: 14 },
+        house: { image: 'house', w: 98, h: 64, size: 0.95, near: 2.3, spread: 1.6, gap: 10 },
+        tall: { image: 'tower-house', w: 55, h: 110, size: 2.4, near: 2.4, spread: 1.8, gap: 7 },
+        skyline: { image: 'city', w: 227, h: 63, size: 1.3, near: 3, spread: 1.5, gap: 12 },
+        ship: { image: 'ship', w: 100, h: 94, size: 1.1, near: 2.6, spread: 1.8, gap: 13 },
+        palmtree: { image: 'palm', w: 93, h: 103, size: 1.5, near: 1.9, spread: 1.6, gap: 6 }
+    });
+    const gpProp = (key) => (GP_PROPS[key].image ? picture(`assets/gp/${GP_PROPS[key].image}.png`) : sprite(`gp-${key}`, GP_PROPS[key].w, GP_PROPS[key].h, (c, w, h) => GP_PROPS[key].paint(c, w, h)));
 
     // --- Гонки ---
     const PARTS = [
@@ -1076,6 +1392,54 @@ window.Games = (() => {
             need = 500 * level;
         }
         return { level, xp, need };
+    };
+
+    // Машины Kenney: цвет любой, кузова открываются с уровнем гонщика и дают небольшой бонус
+    const CAR_COLORS = [['red', 'Красная'], ['blue', 'Синяя'], ['green', 'Зелёная'], ['yellow', 'Жёлтая'], ['black', 'Чёрная']];
+    const CAR_MODELS = [
+        { level: 1, perk: 'без бонуса' },
+        { level: 3, perk: 'руль +1', steer: 1 },
+        { level: 5, perk: 'броня +1', armor: 1 },
+        { level: 7, perk: 'магнит +1', magnet: 1 },
+        { level: 9, perk: 'нитро +1', nitro: 1 }
+    ];
+    const myCar = () => {
+        const chosen = data.race.car || {};
+        const open = driverLevel().level;
+        const model = CAR_MODELS[chosen.model]?.level <= open ? chosen.model : 0;
+        return { name: `car_${CAR_COLORS[chosen.color || 0][0]}_${model + 1}`, ...CAR_MODELS[model] };
+    };
+    // Рисует машину Kenney с тенью, ширина задаётся, высота берётся из листа
+    const paintKenneyCar = (c, name, x, y, w, angle = 0, alpha = 1) => {
+        const [, , sw, sh] = kenneySize('vehicles', name);
+        const h = w * sh / sw;
+        c.save();
+        c.globalAlpha = alpha;
+        c.translate(x, y);
+        c.rotate(angle);
+        c.fillStyle = 'rgba(0, 0, 0, 0.28)';
+        roundRect(c, -w / 2 + 3, -h / 2 + 5, w, h, w * 0.28);
+        c.fill();
+        const ok = kenney(c, 'vehicles', name, 0, 0, w, h);
+        c.restore();
+        return ok;
+    };
+    const kenneyHeight = (name, w) => {
+        const [, , sw, sh] = kenneySize('vehicles', name);
+        return w * sh / sw;
+    };
+    const KENNEY_PROPS = { tree: ['tree_large', 40], bush: ['tree_small', 28], rock: ['rock1', 26], tribune: ['tribune_full', 0] };
+    const paintKenneyProp = (c, kind, x, y, angle = 0) => {
+        const prop = KENNEY_PROPS[kind];
+        if (!prop) return false;
+        const [, , sw, sh] = kenneySize('objects', prop[0]);
+        const w = prop[1] || sw * 0.55;
+        c.save();
+        c.translate(x, y);
+        c.rotate(angle);
+        const ok = kenney(c, 'objects', prop[0], 0, 0, w, w * sh / sw);
+        c.restore();
+        return ok;
     };
 
     const racing = arcade(({ hud, held, finish }) => {
@@ -1104,7 +1468,8 @@ window.Games = (() => {
         const stageLength = (stage) => 500 + stage * 140;
         const stageReward = (stage) => 60 + stage * 30;
         const sponsored = (cash) => Math.round(cash * (1 + partLevel('sponsor') * 0.25));
-        let x, target, cars, coins, props, meters, money, speed, road, gap, stage, length, armor, nitro, boost, shield, tilt, shake, propGap, zone, tab = 'race';
+        const OIL_TIME = 0.7;
+        let x, target, cars, coins, props, oils, meters, money, speed, road, gap, stage, length, armor, nitro, boost, shield, tilt, shake, propGap, zone, slide, slideDir, perk, tab = 'race';
 
         const total = () => Math.floor(meters) + money * COIN_SCORE;
         const paintHud = () => hud(stage ? `Этап ${stage} · ${Math.min(length, Math.floor(meters))} из ${length} м` : `Счёт ${total()} · Рекорд ${data.best.racing || 0}`);
@@ -1114,11 +1479,17 @@ window.Games = (() => {
             const count = speed > 460 && Math.random() < 0.4 ? 3 : Math.random() < 0.5 ? 2 : 1;
             lanes.slice(0, count).forEach((lane) => {
                 const roll = Math.random();
-                const kind = roll < 0.45 ? 'sedan' : roll < 0.62 ? 'taxi' : roll < 0.84 ? 'van' : 'truck';
-                const { w, h } = TOP_CARS[kind];
-                cars.push({ x: lanePos(lane), y: -h - 16, w, h, kind, color: kind === 'taxi' ? '#ffc42e' : pick(TRAFFIC_COLORS) });
+                if (roll < 0.86) {
+                    const name = `car_${pick(['red', 'blue', 'green', 'yellow', 'black'])}_${1 + Math.floor(Math.random() * 5)}`;
+                    const h = kenneyHeight(name, 36);
+                    return cars.push({ x: lanePos(lane), y: -h - 16, w: 36, h, name });
+                }
+                const { w, h } = TOP_CARS.truck;
+                cars.push({ x: lanePos(lane), y: -h - 16, w, h, kind: 'truck', color: pick(TRAFFIC_COLORS) });
             });
             if (Math.random() < 0.6) coins.push({ x: lanePos(lanes[LANES - 1]), y: -40 });
+            // Масло на дороге: машину ведёт в сторону, руль почти не слушается
+            else if ((stage === 0 || stage > 1) && Math.random() < 0.35) oils.push({ x: lanePos(lanes[LANES - 1]), y: -60 });
             gap = (170 + Math.random() * 130) * Math.max(0.65, 1 - stage * 0.025);
         };
         const hits = (item, w, h) => Math.abs(item.x - x) < (w + CAR.w) / 2 - 5 && Math.abs(item.y + h / 2 - (CAR.y + CAR.h / 2)) < (h + CAR.h) / 2 - 5;
@@ -1177,6 +1548,7 @@ window.Games = (() => {
             nitro--;
             boost = NITRO_TIME;
             shake = 0.2;
+            Sound.play('boost');
         };
         // Деньги и опыт начисляются и за аварию, а награда только за финиш
         const payOut = (reward) => {
@@ -1201,6 +1573,7 @@ window.Games = (() => {
             finish('Авария', `До финиша ${length - Math.floor(meters)} м. ${payOut(0)}`);
         };
         const reachFinish = () => {
+            Sound.play('win');
             const text = payOut(stageReward(stage));
             if (stage === data.race.stage) data.race.stage++;
             data.race.pick = stage + 1;
@@ -1217,7 +1590,21 @@ window.Games = (() => {
                 if (mode === 'pause') return '';
                 const { race } = data;
                 const info = driverLevel();
-                const tabs = chipsRow('tab', ['Заезд', 'Гараж'], tab === 'race' ? 0 : 1);
+                const tabs = chipsRow('tab', ['Заезд', 'Гараж', 'Машина'], ['race', 'garage', 'car'].indexOf(tab));
+                if (tab === 'car') {
+                    const chosen = race.car || {};
+                    const current = myCar();
+                    return `${tabs}
+                        ${chipsRow('color', CAR_COLORS.map(([, label]) => label), chosen.color || 0)}
+                        <div class="shop">${CAR_MODELS.map((model, i) => {
+                            const open = info.level >= model.level;
+                            const active = current.name.endsWith(`_${i + 1}`);
+                            return `<div class="shop-row">
+                                <span><b>Модель ${i + 1}</b><small>${open ? model.perk : `откроется на ${model.level} уровне гонщика`}</small></span>
+                                <button type="button" class="chip small ${active ? 'active' : ''}" data-model="${i}" ${open ? '' : 'disabled'}>${active ? 'Выбрана' : open ? 'Выбрать' : 'Закрыта'}</button>
+                            </div>`;
+                        }).join('')}</div>`;
+                }
                 if (tab === 'race') {
                     return `${tabs}
                         <div class="stage-pick">
@@ -1241,10 +1628,13 @@ window.Games = (() => {
                     }).join('')}</div>`;
             },
             pick(target, overlay, refresh) {
-                const chip = target.closest('[data-tab], [data-step], [data-buy]');
-                if (!chip) return;
+                const chip = target.closest('[data-tab], [data-step], [data-buy], [data-color], [data-model]');
+                if (!chip || chip.disabled) return;
                 const { race } = data;
-                if (chip.dataset.tab) tab = chip.dataset.tab === '0' ? 'race' : 'garage';
+                Sound.play('click');
+                if (chip.dataset.tab) tab = ['race', 'garage', 'car'][Number(chip.dataset.tab)];
+                else if (chip.dataset.color) race.car = { ...race.car, color: Number(chip.dataset.color) };
+                else if (chip.dataset.model) race.car = { ...race.car, model: Number(chip.dataset.model) };
                 else if (chip.dataset.step) race.pick = clamp(race.pick + Number(chip.dataset.step), 0, race.stage);
                 else {
                     const part = PARTS.find((item) => item.id === chip.dataset.buy);
@@ -1263,6 +1653,10 @@ window.Games = (() => {
                 cars = [];
                 coins = [];
                 props = [];
+                oils = [];
+                slide = 0;
+                slideDir = 1;
+                perk = myCar();
                 for (let y = -20; y < H; y += 64) props.push({ x: Math.random() < 0.5 ? 20 : W - 20, y, kind: pick(zone.props) });
                 propGap = 40;
                 tilt = 0;
@@ -1273,8 +1667,8 @@ window.Games = (() => {
                 speed = 240 + Math.min(120, stage * 10);
                 road = 0;
                 gap = 120;
-                armor = partLevel('armor');
-                nitro = partLevel('nitro');
+                armor = partLevel('armor') + (perk.armor || 0);
+                nitro = partLevel('nitro') + (perk.nitro || 0);
                 boost = 0;
                 shield = 0;
                 paintHud();
@@ -1288,12 +1682,18 @@ window.Games = (() => {
                 target = limit(px);
             },
             update(dt) {
-                const steer = partLevel('steer');
+                const steer = partLevel('steer') + (perk.steer || 0);
                 const was = x;
+                const grip = slide > 0 ? 0.25 : 1;
                 if (held.left || held.right) {
-                    x = limit(x + (held.right ? 1 : -1) * (340 + steer * 50) * dt);
+                    x = limit(x + (held.right ? 1 : -1) * (340 + steer * 50) * grip * dt);
                     target = x;
-                } else x += clamp(target - x, -(560 + steer * 70) * dt, (560 + steer * 70) * dt);
+                } else x += clamp(target - x, -(560 + steer * 70) * grip * dt, (560 + steer * 70) * grip * dt);
+                if (slide > 0) {
+                    slide -= dt;
+                    x = limit(x + slideDir * 170 * dt);
+                    target = x;
+                }
 
                 boost = Math.max(0, boost - dt);
                 shield = Math.max(0, shield - dt);
@@ -1310,18 +1710,28 @@ window.Games = (() => {
                     props.push({ x: Math.random() < 0.5 ? 20 + Math.random() * 6 : W - 20 - Math.random() * 6, y: -30, kind: pick(zone.props) });
                     propGap = 46 + Math.random() * 40;
                 }
-                for (const item of [...cars, ...coins, ...props]) item.y += move;
+                for (const item of [...cars, ...coins, ...props, ...oils]) item.y += move;
+                oils = oils.filter((oil) => {
+                    if (!oil.hit && hits({ x: oil.x, y: oil.y - 10 }, 30, 20)) {
+                        oil.hit = true;
+                        slide = OIL_TIME;
+                        slideDir = Math.random() < 0.5 ? -1 : 1;
+                        Sound.play('slide');
+                    }
+                    return oil.y < H + 30;
+                });
                 props = props.filter((item) => item.y < H + 30);
                 dust.step(dt, 0, move / dt);
                 if (boost) {
                     for (const side of [-8, 8]) dust.add(x + side, CAR.y + CAR.h + 2, (Math.random() - 0.5) * 30, 40, 0.28, 5, Math.random() < 0.5 ? '#ffd23f' : '#ff7a1a', -12);
                 }
-                const reach = partLevel('magnet') * 34;
+                const reach = (partLevel('magnet') + (perk.magnet || 0)) * 34;
                 coins = coins.filter((coin) => {
                     if (reach && Math.hypot(coin.x - x, coin.y - CAR.y) < reach * 2) coin.x += clamp(x - coin.x, -420 * dt, 420 * dt);
                     if (hits(coin, 22, 22)) {
                         money++;
                         burst(coin.x, coin.y + 11, 8, '#ffd23f');
+                        Sound.play('coin', { volume: 0.7 });
                         return false;
                     }
                     return coin.y < H;
@@ -1333,6 +1743,7 @@ window.Games = (() => {
                         money++; // Рывок разбрасывает машины
                         burst(car.x, car.y + car.h / 2, 18, '#ffd23f');
                         shake = 0.2;
+                        Sound.play('bump');
                         return false;
                     }
                     if (shield) return true;
@@ -1341,10 +1752,12 @@ window.Games = (() => {
                         shield = SHIELD_TIME;
                         burst(car.x, car.y + car.h, 20, '#ff9b3d');
                         shake = 0.3;
+                        Sound.play('bump');
                         return false;
                     }
                     car.crash = true;
                     burst((car.x + x) / 2, CAR.y, 30, '#ff9b3d');
+                    Sound.play('crash');
                     return true;
                 });
                 paintHud();
@@ -1356,7 +1769,8 @@ window.Games = (() => {
                 if (shake) c.translate((Math.random() - 0.5) * 6, (Math.random() - 0.5) * 6);
                 const ground = tile();
                 for (let y = Math.round(road) - TILE; y < H; y += TILE) c.drawImage(ground, 0, y, W, TILE + 1);
-                for (const item of props) stamp(c, topProp(item.kind), item.x, item.y);
+                for (const item of props) if (!paintKenneyProp(c, item.kind, item.x, item.y)) stamp(c, topProp(item.kind), item.x, item.y);
+                for (const oil of oils) kenney(c, 'objects', 'oil', oil.x, oil.y, 46, 38);
                 if (stage) {
                     const line = CAR.y - (length - meters) * 10;
                     if (line > -40) {
@@ -1369,8 +1783,14 @@ window.Games = (() => {
                         }
                     }
                 }
+                const coinArt = art('coin');
                 for (const coin of coins) {
                     const turn = Math.abs(Math.cos((coin.y + coin.x) * 0.03));
+                    if (coinArt) {
+                        const w = 4 + turn * 20;
+                        c.drawImage(coinArt, coin.x - w / 2, coin.y, w, 24);
+                        continue;
+                    }
                     c.fillStyle = 'rgba(0, 0, 0, 0.25)';
                     c.beginPath();
                     c.ellipse(coin.x + 2, coin.y + 14, 10, 9, 0, 0, Math.PI * 2);
@@ -1384,7 +1804,7 @@ window.Games = (() => {
                     c.ellipse(coin.x, coin.y + 11, 2 + turn * 6.5, 8, 0, 0, Math.PI * 2);
                     c.fill();
                 }
-                for (const car of cars) stamp(c, topCar(car.kind, car.color), car.x, car.y + car.h / 2);
+                for (const car of cars) if (!car.name || !paintKenneyCar(c, car.name, car.x, car.y + car.h / 2, car.w)) stamp(c, topCar(car.kind || 'sedan', car.color || '#7a8699'), car.x, car.y + car.h / 2);
                 if (zone.night) {
                     for (const car of cars) {
                         paintGlow(c, car.x - car.w / 2 + 8, car.y + car.h, 14, 'rgba(255, 36, 54, 0.7)');
@@ -1418,11 +1838,13 @@ window.Games = (() => {
                     }
                 }
                 if (!shield || Math.floor(shield * 10) % 2) {
-                    c.save();
-                    c.translate(x, CAR.y + CAR.h / 2);
-                    c.rotate(tilt);
-                    stamp(c, topCar('sport', theme.accent), 0, 0);
-                    c.restore();
+                    if (!paintKenneyCar(c, perk.name, x, CAR.y + CAR.h / 2, 38, tilt + (slide > 0 ? Math.sin(slide * 20) * 0.25 : 0))) {
+                        c.save();
+                        c.translate(x, CAR.y + CAR.h / 2);
+                        c.rotate(tilt);
+                        stamp(c, topCar('sport', theme.accent), 0, 0);
+                        c.restore();
+                    }
                 }
                 c.restore();
 
@@ -1464,7 +1886,10 @@ window.Games = (() => {
         const BLOCK = 26;
         const START = 170;
         const SNAP = 5; // Почти точное попадание считается точным
-        let blocks, moving, falling, view, floors;
+        const STREAK = 3; // Столько точных попаданий подряд расширяют блок
+        const GROW = 12;
+        const COLORS = ['blue', 'green', 'yellow', 'orange', 'red', 'pink'];
+        let blocks, moving, falling, view, floors, perfect, banner;
 
         const paintHud = () => hud(`Этажи ${floors} · Рекорд ${data.best.tower || 0}`);
         const nextBlock = () => {
@@ -1475,20 +1900,36 @@ window.Games = (() => {
         const screenY = (index) => H - 44 - index * BLOCK + view;
         const drop = () => {
             const top = blocks[blocks.length - 1];
-            if (Math.abs(moving.x - top.x) <= SNAP) moving.x = top.x;
+            const exact = Math.abs(moving.x - top.x) <= SNAP;
+            if (exact) moving.x = top.x;
             const left = Math.max(moving.x, top.x);
-            const width = Math.min(moving.x + moving.w, top.x + top.w) - left;
+            let width = Math.min(moving.x + moving.w, top.x + top.w) - left;
             if (width <= 0) {
                 const fresh = record('tower', floors);
                 paintHud();
+                Sound.play('lose');
+                falling.push({ x: moving.x, w: moving.w, y: screenY(blocks.length) - view, speed: 0, index: blocks.length });
                 finish('Башня упала', `Этажей ${floors}${fresh && floors ? ', новый рекорд!' : ''}`);
                 return true;
             }
-            if (width < moving.w) {
+            let x = left;
+            if (exact) {
+                perfect++;
+                Sound.tone(440 * 2 ** (Math.min(perfect, 12) / 12), 0.18, 'triangle', 0.14);
+                // Серия точных попаданий возвращает ширину
+                if (perfect >= STREAK && width < START) {
+                    const grown = Math.min(START, width + GROW);
+                    x = clamp(left - (grown - width) / 2, 0, W - grown);
+                    width = grown;
+                    banner = { text: 'Блок шире!', life: 1 };
+                } else banner = { text: perfect > 1 ? `Точно ×${perfect}` : 'Точно', life: 0.8 };
+            } else {
+                perfect = 0;
+                Sound.play('drop');
                 const cutLeft = moving.x < top.x;
                 falling.push({ x: cutLeft ? moving.x : left + width, w: moving.w - width, y: screenY(blocks.length) - view, speed: 0, index: blocks.length });
             }
-            blocks.push({ x: left, w: width });
+            blocks.push({ x, w: width });
             floors++;
             paintHud();
             nextBlock();
@@ -1498,14 +1939,16 @@ window.Games = (() => {
         return {
             width: W,
             height: H,
-            hintKeys: 'Пробел или клик ставит блок',
-            hintTouch: 'Тапни, чтобы поставить блок точно на предыдущий',
+            hintKeys: 'Пробел или клик ставит блок. Три точных попадания подряд расширяют блок',
+            hintTouch: 'Тапни, чтобы поставить блок на предыдущий. Три точных попадания подряд расширяют блок',
             action: drop,
             reset() {
                 blocks = [{ x: (W - START) / 2, w: START }];
                 falling = [];
                 view = 0;
                 floors = 0;
+                perfect = 0;
+                banner = null;
                 nextBlock();
                 paintHud();
             },
@@ -1524,9 +1967,36 @@ window.Games = (() => {
                     piece.y += piece.speed * dt;
                 }
                 falling = falling.filter((piece) => piece.y < H + view);
+                if (banner && (banner.life -= dt) <= 0) banner = null;
             },
             draw(c, theme) {
+                // Чем выше башня, тем темнее небо, а потом появляются звёзды
+                const height = clamp(floors / 40, 0, 1);
+                const sky = c.createLinearGradient(0, 0, 0, H);
+                sky.addColorStop(0, `hsl(${215 - height * 25}, 70%, ${62 - height * 50}%)`);
+                sky.addColorStop(1, `hsl(${200 - height * 30}, 70%, ${82 - height * 55}%)`);
+                c.fillStyle = sky;
+                c.fillRect(0, 0, W, H);
+                if (height > 0.5) {
+                    c.globalAlpha = (height - 0.5) * 2;
+                    c.fillStyle = '#fff';
+                    for (let i = 0; i < 40; i++) c.fillRect(noise(i) * W, noise(i + 0.5) * H * 0.7, 1.6, 1.6);
+                    c.globalAlpha = 1;
+                }
+                c.fillStyle = 'rgba(255, 255, 255, 0.5)';
+                for (let i = 0; i < 4; i++) {
+                    const y = ((i * 140 + view * 0.4) % (H + 80)) - 40;
+                    const x = (noise(i + 2) * W + i * 40) % W;
+                    c.beginPath();
+                    c.ellipse(x, y, 40, 12, 0, 0, Math.PI * 2);
+                    c.ellipse(x + 26, y - 6, 26, 10, 0, 0, Math.PI * 2);
+                    c.fill();
+                }
+                c.fillStyle = '#4a9a55';
+                c.fillRect(0, H - 18 + view, W, 18);
                 const paint = (x, y, w, index) => {
+                    const image = art(`brick-${COLORS[index % COLORS.length]}`);
+                    if (image) return sliced(c, image, x, y, w, BLOCK - 1, 0.15);
                     c.fillStyle = theme.rows[index % theme.rows.length];
                     roundRect(c, x, y, w, BLOCK - 2, Math.min(5, w / 2));
                     c.fill();
@@ -1537,6 +2007,15 @@ window.Games = (() => {
                 });
                 paint(moving.x, screenY(blocks.length), moving.w, blocks.length);
                 for (const piece of falling) paint(piece.x, piece.y + view, piece.w, piece.index);
+                if (banner) {
+                    c.globalAlpha = Math.min(1, banner.life * 2);
+                    c.fillStyle = '#fff';
+                    c.font = '800 20px system-ui, sans-serif';
+                    c.textAlign = 'center';
+                    c.textBaseline = 'middle';
+                    c.fillText(banner.text, W / 2, 70);
+                    c.globalAlpha = 1;
+                }
             }
         };
     });
@@ -1550,10 +2029,13 @@ window.Games = (() => {
         const el = make(`<div class="merge">
             <div class="merge-board">${'<i class="merge-cell"></i>'.repeat(SIZE * SIZE)}</div>
             <p class="game-status" role="status"></p>
+            <div class="game-buttons"><button type="button" class="btn" data-undo></button></div>
         </div>`);
+        const UNDOS = 3;
         const board = el.querySelector('.merge-board');
         const status = el.querySelector('.game-status');
-        let grid, points, nextId, over, won, start;
+        const undoButton = el.querySelector('[data-undo]');
+        let grid, points, nextId, over, won, start, history, undos;
 
         const tiles = () => grid.flat().filter(Boolean);
         const paintHud = () => shell.hud(`Счёт ${points} · Рекорд ${data.best.merge || 0}`);
@@ -1565,7 +2047,7 @@ window.Games = (() => {
             const alive = new Set();
             for (const tile of tiles()) {
                 alive.add(String(tile.id));
-                let node = board.querySelector(`[data-id="${tile.id}"]`);
+                let node = board.querySelector(`[data-id="${tile.id}"]:not([data-gone])`);
                 if (!node) {
                     node = make(`<span class="merge-tile fresh" data-id="${tile.id}"><b></b></span>`);
                     place(node, tile);
@@ -1578,6 +2060,8 @@ window.Games = (() => {
                 node.classList.toggle('bright', tile.v >= 32);
                 node.classList.toggle('long', tile.v >= 1024);
             }
+            undoButton.textContent = `Отменить ход · ${undos}`;
+            undoButton.disabled = !undos || !history.length;
             board.querySelectorAll('.merge-tile').forEach((node) => {
                 if (!alive.has(node.dataset.id) && !node.dataset.gone) {
                     node.dataset.gone = '1';
@@ -1607,8 +2091,20 @@ window.Games = (() => {
             const k = direction === 'left' || direction === 'up' ? j : SIZE - 1 - j;
             return direction === 'left' || direction === 'right' ? [i, k] : [k, i];
         });
+        const snapshot = () => ({ grid: grid.map((row) => row.map((tile) => tile && { ...tile })), points, over, won });
+        const undo = () => {
+            if (!undos || !history.length) return;
+            const last = history.pop();
+            undos--;
+            ({ grid, points, over, won } = last);
+            status.textContent = 'Ход отменён';
+            Sound.play('slide', { rate: 0.8 });
+            paint();
+        };
         const move = (direction) => {
             if (over) return;
+            const before = snapshot();
+            let biggest = 0;
             const next = Array.from({ length: SIZE }, () => Array(SIZE).fill(null));
             const gone = [];
             let moved = false;
@@ -1623,6 +2119,7 @@ window.Games = (() => {
                         last.v *= 2;
                         last.merged = true;
                         points += last.v;
+                        biggest = Math.max(biggest, last.v);
                         tile.r = last.r;
                         tile.c = last.c;
                         gone.push(tile);
@@ -1638,6 +2135,9 @@ window.Games = (() => {
                 }
             }
             if (!moved) return;
+            history = [...history, before].slice(-UNDOS);
+            if (biggest >= 64) Sound.tone(220 * 2 ** (Math.log2(biggest) / 4), 0.16, 'triangle', 0.12);
+            else Sound.play('slide', { volume: 0.35 });
             for (const tile of gone) {
                 const node = board.querySelector(`[data-id="${tile.id}"]`);
                 if (node) place(node, tile);
@@ -1649,11 +2149,13 @@ window.Games = (() => {
             paint();
             if (!won && tiles().some((tile) => tile.v >= 2048)) {
                 won = true;
+                Sound.play('win');
                 status.textContent = 'Есть 2048! Можно играть дальше';
             }
             if (stuck()) {
                 over = true;
-                status.textContent = `Ходов больше нет. Счёт ${points}`;
+                Sound.play('lose');
+                status.textContent = `Ходов больше нет. Счёт ${points}${undos ? '. Можно отменить ход' : ''}`;
             }
         };
         const restart = () => {
@@ -1662,6 +2164,8 @@ window.Games = (() => {
             nextId = 1;
             over = false;
             won = false;
+            history = [];
+            undos = UNDOS;
             board.querySelectorAll('.merge-tile').forEach((node) => node.remove());
             status.textContent = touchScreen() ? 'Проводи пальцем, чтобы сдвинуть плитки' : 'Стрелки или WASD сдвигают плитки';
             addTile();
@@ -1669,6 +2173,7 @@ window.Games = (() => {
             paint();
         };
 
+        undoButton.addEventListener('click', undo);
         board.addEventListener('pointerdown', (e) => {
             board.setPointerCapture(e.pointerId);
             start = [e.clientX, e.clientY];
@@ -1699,18 +2204,30 @@ window.Games = (() => {
     // --- Повтори цвета ---
     const simon = (shell) => {
         const PADS = 4;
+        const NOTES = [329.6, 392, 523.3, 659.3];
+        const MODES = ['Обычный', 'Наоборот'];
         const el = make(`<div class="simon">
+            <div class="simon-modes"></div>
             <div class="simon-board">${Array.from({ length: PADS }, (_, i) => `<button type="button" class="simon-pad" data-pad="${i}" aria-label="Цвет ${i + 1}"></button>`).join('')}</div>
             <p class="game-status" role="status"></p>
             <div class="game-buttons"><button type="button" class="btn btn-primary" data-begin>Начать</button></div>
         </div>`);
         const pads = [...el.querySelectorAll('.simon-pad')];
+        const modes = el.querySelector('.simon-modes');
+        const reverse = () => (data.level.simon ?? 0) === 1;
+        const key = () => (reverse() ? 'simonReverse' : 'simon');
+        // Наоборот: повторять цепочку с последнего цвета
+        const expected = () => order[reverse() ? order.length - 1 - step : step];
         const status = el.querySelector('.game-status');
         const begin = el.querySelector('[data-begin]');
         let order, step, phase, timer; // Фазы: idle, show, input
 
-        const paintHud = () => shell.hud(`Серия ${order.length ? order.length - (phase === 'input' ? 0 : 1) : 0} · Рекорд ${data.best.simon || 0}`);
+        const paintHud = () => shell.hud(`Серия ${order.length ? order.length - (phase === 'input' ? 0 : 1) : 0} · Рекорд ${data.best[key()] || 0}`);
+        const paintModes = () => {
+            modes.innerHTML = chipsRow('mode', MODES, data.level.simon ?? 0);
+        };
         const flash = (index, ms) => {
+            Sound.tone(NOTES[index], Math.max(0.12, ms / 1000), 'triangle', 0.16);
             pads[index].classList.add('lit');
             setTimeout(() => pads[index].classList.remove('lit'), ms);
         };
@@ -1724,7 +2241,7 @@ window.Games = (() => {
             const showAt = (i) => {
                 if (i === order.length) {
                     phase = 'input';
-                    status.textContent = 'Повтори';
+                    status.textContent = reverse() ? 'Повтори с конца' : 'Повтори';
                     paintHud();
                     return;
                 }
@@ -1740,13 +2257,20 @@ window.Games = (() => {
             phase = 'idle';
             begin.hidden = false;
             begin.textContent = 'Начать';
-            status.textContent = 'Запоминай цвета и повторяй их по порядку';
+            status.textContent = reverse() ? 'Запоминай цвета и повторяй их в обратном порядке' : 'Запоминай цвета и повторяй их по порядку';
+            paintModes();
             paintHud();
         };
 
         el.addEventListener('click', (e) => {
             const target = e.target.closest('button');
             if (!target) return;
+            if (target.dataset.mode) {
+                data.level.simon = Number(target.dataset.mode);
+                save();
+                restart();
+                return;
+            }
             if ('begin' in target.dataset) {
                 restart();
                 begin.hidden = true;
@@ -1756,9 +2280,10 @@ window.Games = (() => {
             if (phase !== 'input') return;
             const index = Number(target.dataset.pad);
             flash(index, 180);
-            if (index !== order[step]) {
+            if (index !== expected()) {
                 const done = order.length - 1;
-                const fresh = record('simon', done);
+                const fresh = record(key(), done);
+                Sound.play('lose');
                 phase = 'idle';
                 status.textContent = `Ошибка. Серия ${done}${fresh ? ', новый рекорд!' : ''}`;
                 begin.hidden = false;
@@ -1768,7 +2293,7 @@ window.Games = (() => {
             }
             step++;
             if (step < order.length) return;
-            record('simon', order.length);
+            record(key(), order.length);
             phase = 'show';
             status.textContent = 'Верно';
             timer = setTimeout(nextRound, 650);
@@ -1794,7 +2319,7 @@ window.Games = (() => {
         const tools = el.querySelector('.mines-tools');
         const grid = el.querySelector('.mines-board');
         const status = el.querySelector('.game-status');
-        let board, cells, phase, seconds, timer, flagMode, holdTimer, held;
+        let board, cells, phase, seconds, timer, flagMode, holdTimer, held, hints;
 
         const neighbors = (i) => {
             const { cols, rows } = board;
@@ -1846,7 +2371,8 @@ window.Games = (() => {
         };
         const paintTools = () => {
             tools.innerHTML = `${chipsRow('board', BOARDS.map((b) => b.label), data.level.mines ?? 0)}
-                <button type="button" class="chip small ${flagMode ? 'active' : ''}" data-flag-mode aria-pressed="${flagMode}">${ICON_HREF('flag')}Флажок</button>`;
+                <button type="button" class="chip small ${flagMode ? 'active' : ''}" data-flag-mode aria-pressed="${flagMode}">${ICON_HREF('flag')}Флажок</button>
+                <button type="button" class="chip small" data-hint ${hints && phase === 'play' ? '' : 'disabled'}>Подсказка · ${hints}</button>`;
         };
         const stopClock = () => {
             clearInterval(timer);
@@ -1859,6 +2385,7 @@ window.Games = (() => {
             phase = 'ready';
             seconds = 0;
             flagMode = false;
+            hints = 1;
             grid.style.setProperty('--cols', board.cols);
             grid.innerHTML = cells.map(() => '<button type="button" class="mine-cell"></button>').join('');
             status.textContent = 'Первый ход всегда безопасен';
@@ -1891,10 +2418,12 @@ window.Games = (() => {
         const settle = () => {
             if (cells.some((cell) => cell.open && cell.mine)) {
                 phase = 'lost';
+                Sound.play('crash');
                 stopClock();
                 status.textContent = 'Подорвался. Кнопка справа вверху начнёт заново';
             } else if (cells.every((cell) => cell.mine || cell.open)) {
                 phase = 'won';
+                Sound.play('win');
                 stopClock();
                 const key = `mines${data.level.mines ?? 0}`;
                 const best = data.best[key];
@@ -1910,6 +2439,7 @@ window.Games = (() => {
         const flag = (i) => {
             if (phase === 'won' || phase === 'lost' || cells[i].open) return;
             cells[i].flag = !cells[i].flag;
+            Sound.play('drop', { volume: 0.6, rate: cells[i].flag ? 1.1 : 0.85 });
             paint();
         };
         const open = (i) => {
@@ -1920,9 +2450,15 @@ window.Games = (() => {
                 plant(i);
                 status.textContent = 'Удержи клетку или включи «Флажок», чтобы пометить мину';
             }
+            const closed = cells.filter((item) => !item.open).length;
             if (!cell.open) reveal(i);
             else if (neighbors(i).filter((n) => cells[n].flag).length === cell.count) neighbors(i).forEach(reveal); // Открываем соседей числа
+            const opened = closed - cells.filter((item) => !item.open).length;
+            if (opened > 6) Sound.play('slide', { volume: 0.5 });
+            else if (opened) Sound.play('click', { volume: 0.5 });
+            const wasReady = phase;
             settle();
+            if (wasReady === 'play' || phase === 'play') paintTools();
         };
 
         grid.addEventListener('pointerdown', (e) => {
@@ -1966,6 +2502,16 @@ window.Games = (() => {
                 flagMode = !flagMode;
                 paintTools();
             }
+            // Подсказка открывает безопасную клетку рядом с уже открытыми
+            if (e.target.closest('[data-hint]') && hints && phase === 'play') {
+                const safe = cells.map((cell, i) => i).filter((i) => !cells[i].open && !cells[i].mine && !cells[i].flag);
+                const near = safe.filter((i) => neighbors(i).some((n) => cells[n].open));
+                const spot = pick(near.length ? near : safe);
+                if (spot === undefined) return;
+                hints--;
+                open(spot);
+                paintTools();
+            }
         });
 
         reset();
@@ -1990,6 +2536,7 @@ window.Games = (() => {
         let active = 0;
         let message = '';
         let timer = 0;
+        let insured = 0;
 
         const value = (cards) => {
             let total = 0;
@@ -2004,14 +2551,17 @@ window.Games = (() => {
         const worth = (card) => (card.rank === 14 ? 11 : Math.min(card.rank, 10));
         const isBlackjack = (cards) => cards.length === 2 && value(cards) === 21;
         const draw = () => {
-            if (shoe.length < 52) shoe = newDeck(2, DECKS);
+            if (shoe.length < 52) {
+                shoe = newDeck(2, DECKS);
+                Sound.play('shuffle');
+            }
             return shoe.pop();
         };
 
         const paintHud = () => shell.hud(`Фишки ${chips}`);
         const paint = () => {
             paintHud();
-            const hideHole = phase === 'play';
+            const hideHole = phase === 'play' || phase === 'insure';
             const dealerCards = dealer.map((card, i) => (hideHole && i === 1 ? cardBack() : paintCard(card)));
             const dealerScore = hideHole ? worth(dealer[0]) : value(dealer);
             const hand = hands[active];
@@ -2030,14 +2580,19 @@ window.Games = (() => {
                             ${handRow(item.cards.map((card) => paintCard(card)))}
                         </div>`).join('') : `<div class="felt-side"><span class="felt-label">Ты</span>${handRow([])}</div>`}
                 </section>
-                <p class="game-status" role="status">${message || { bet: 'Сделай ставку', play: 'Твой ход', dealer: 'Дилер берёт карты' }[phase]}</p>
+                <p class="game-status" role="status">${message || { bet: 'Сделай ставку', play: 'Твой ход', dealer: 'Дилер берёт карты', insure: 'У дилера туз. Застраховать ставку от блэкджека?' }[phase]}</p>
                 <div class="game-actions">
                     ${phase === 'bet' ? `
-                        <div class="coins">${COINS.map((coin) => `<button type="button" class="coin" data-coin="${coin}" ${bet + coin > chips ? 'disabled' : ''}>${coin}</button>`).join('')}</div>
+                        <div class="coins">${COINS.map((coin) => `<button type="button" class="coin" data-coin="${coin}" style="--chip:url('cards/chip-${coin}.png')" ${bet + coin > chips ? 'disabled' : ''}><span>${coin}</span></button>`).join('')}</div>
                         <div class="game-buttons">
                             <button type="button" class="btn" data-clear ${bet ? '' : 'disabled'}>Сбросить</button>
                             <button type="button" class="btn btn-primary" data-deal ${bet ? '' : 'disabled'}>Раздать · ${bet}</button>
                             ${chips < COINS[0] ? `<button type="button" class="btn" data-refill>Взять ещё ${START_CHIPS}</button>` : ''}
+                        </div>` : ''}
+                    ${phase === 'insure' ? `
+                        <div class="game-buttons">
+                            <button type="button" class="btn btn-primary" data-insure>Страховка · ${Math.floor(hands[0].bet / 2)}</button>
+                            <button type="button" class="btn" data-skip-insure>Без страховки</button>
                         </div>` : ''}
                     ${phase === 'play' ? `
                         <div class="game-buttons">
@@ -2053,12 +2608,30 @@ window.Games = (() => {
         const deal = () => {
             chips -= bet;
             paintCard.reset();
+            Sound.play('chip');
             hands = [{ cards: [draw(), draw()], bet }];
             dealer = [draw(), draw()];
             active = 0;
-            phase = 'play';
+            insured = 0;
             message = '';
+            // Туз у дилера: сначала предлагаем страховку, а заглядывать под карту будем потом
+            if (dealer[0].rank === 14 && !isBlackjack(hands[0].cards) && chips >= Math.floor(bet / 2)) {
+                phase = 'insure';
+                return paint();
+            }
+            phase = 'play';
             if (isBlackjack(hands[0].cards) || isBlackjack(dealer)) return settle();
+            paint();
+        };
+        const insure = (take) => {
+            if (take) {
+                insured = Math.floor(hands[0].bet / 2);
+                chips -= insured;
+                Sound.play('chip');
+            }
+            phase = 'play';
+            if (isBlackjack(dealer)) return settle();
+            message = insured ? 'Блэкджека нет, страховка сгорела' : '';
             paint();
         };
         const nextHand = () => {
@@ -2095,9 +2668,15 @@ window.Games = (() => {
                 if (mine === house) { chips += hand.bet; return `${prefix}ничья`; }
                 return `${prefix}дилер выиграл`;
             });
+            if (insured && isBlackjack(dealer)) {
+                chips += insured * 3;
+                lines.push(`страховка принесла ${insured * 2}`);
+            }
+            const before = data.chips;
             phase = 'done';
             message = lines.join(' · ');
             data.chips = chips;
+            Sound.play(chips > before ? 'chips' : chips < before ? 'lose' : 'select', { volume: 0.7 });
             record('blackjack', chips);
             save();
             paint();
@@ -2109,7 +2688,12 @@ window.Games = (() => {
             const hand = hands[active];
             if (target.dataset.coin) {
                 bet += Number(target.dataset.coin);
+                Sound.play('chip');
                 paint();
+            } else if ('insure' in target.dataset) {
+                insure(true);
+            } else if ('skipInsure' in target.dataset) {
+                insure(false);
             } else if ('clear' in target.dataset) {
                 bet = 0;
                 paint();
@@ -2154,7 +2738,7 @@ window.Games = (() => {
 
         const restart = () => {
             clearTimeout(timer);
-            if (phase === 'play' || phase === 'dealer') chips = data.chips; // Сброс посреди раздачи возвращает ставку
+            if (phase === 'play' || phase === 'dealer' || phase === 'insure') chips = data.chips; // Сброс посреди раздачи возвращает ставку
             hands = [];
             dealer = [];
             message = '';
@@ -2519,12 +3103,12 @@ window.Games = (() => {
     // --- Гран-при ---
     // Вид из-за болида: дорога собирается из коротких сегментов, у каждого своя кривизна и высота
     const GP_ROUNDS = [
-        { name: 'Монца', sky: ['#4f9fe0', '#dff2ff'], hills: '#7fa6a8', grass: ['#3f9a58', '#378c4e'], props: ['tree', 'tree', 'stand', 'board', 'tyres'], plan: [[150, 0], [12, 7], [12, -7], [170, 0], [50, 3], [90, 0], [14, 5.5], [14, -5.5], [120, 0], [60, 3.2], [140, 0]] },
-        { name: 'Манама', sky: ['#17153b', '#e88a55'], hills: '#5b3a4c', grass: ['#c9a66b', '#bd9a60'], sun: '#ffd9a0', props: ['palm', 'dune', 'tower', 'stand', 'tyres', 'dune'], plan: [[170, 0], [16, 8], [60, 0], [40, -3], [20, 6], [130, 0], [18, -7], [90, 0], [50, 3.4], [16, 7], [150, 0]] },
-        { name: 'Монако', sky: ['#49aee0', '#eafaff'], hills: '#6f9a8e', grass: ['#7c8894', '#737f8b'], props: ['villa', 'yacht', 'palm', 'stand', 'villa'], plan: [[60, 0], [16, 6], [50, 0, 900], [14, -9], [24, 9], [50, 0, -900], [14, 7], [70, 0], [12, -6], [12, 6], [50, 0], [14, -9], [80, 0], [16, 6]] },
-        { name: 'Спа', sky: ['#8ea6ba', '#e6edf2'], hills: '#54786a', grass: ['#2f7f4b', '#2a7344'], props: ['pine', 'pine', 'pine', 'stand', 'board'], plan: [[60, 0], [14, 9], [90, 0, -1800], [16, -3.5], [16, 3.5], [130, 0, 2600], [24, 5.5], [70, 0, -800], [30, -6], [60, 3], [90, 0], [14, -8], [90, 0]] },
-        { name: 'Сузука', sky: ['#62b6dc', '#ffe6d2'], hills: '#7d9fa5', grass: ['#47a267', '#3f945c'], props: ['tree', 'wheel', 'stand', 'board', 'tree'], plan: [[120, 0], [24, 5], [10, -4.5], [10, 4.5], [10, -4.5], [60, 0, 1000], [18, 6.5], [80, 0], [14, -8], [130, 0, -1000], [40, -3.2], [100, 0], [12, 6]] },
-        { name: 'Сингапур', sky: ['#080a22', '#3a2a66'], hills: '#232846', grass: ['#1d3446', '#1a2f40'], night: true, props: ['block', 'block', 'tower', 'stand', 'board'], plan: [[110, 0], [12, 7], [12, -6], [80, 0], [14, 8], [120, 0], [14, -7], [40, 0], [12, 7], [12, -7], [60, 0], [14, 9], [100, 0], [14, -6]] }
+        { name: 'Монца', sky: ['#4f9fe0', '#dff2ff'], hills: '#7fa6a8', grass: ['#3f9a58', '#378c4e'], props: ['oak', 'forest', 'tree', 'stand', 'board', 'tyres', 'oak'], panorama: 'sky-day', plan: [[150, 0], [12, 7], [12, -7], [170, 0], [50, 3], [90, 0], [14, 5.5], [14, -5.5], [120, 0], [60, 3.2], [140, 0]] },
+        { name: 'Манама', sky: ['#17153b', '#e88a55'], hills: '#5b3a4c', grass: ['#c9a66b', '#bd9a60'], sun: '#ffd9a0', props: ['palmtree', 'dune', 'tower', 'stand', 'tyres', 'dune', 'palm'], plan: [[170, 0], [16, 8], [60, 0], [40, -3], [20, 6], [130, 0], [18, -7], [90, 0], [50, 3.4], [16, 7], [150, 0]] },
+        { name: 'Монако', sky: ['#49aee0', '#eafaff'], hills: '#6f9a8e', grass: ['#7c8894', '#737f8b'], props: ['villa', 'ship', 'palmtree', 'stand', 'house', 'yacht'], panorama: 'sky-day', plan: [[60, 0], [16, 6], [50, 0, 900], [14, -9], [24, 9], [50, 0, -900], [14, 7], [70, 0], [12, -6], [12, 6], [50, 0], [14, -9], [80, 0], [16, 6]] },
+        { name: 'Спа', sky: ['#8ea6ba', '#e6edf2'], hills: '#54786a', grass: ['#2f7f4b', '#2a7344'], props: ['fir', 'pine', 'forest', 'cliff', 'stand', 'board', 'fir'], plan: [[60, 0], [14, 9], [90, 0, -1800], [16, -3.5], [16, 3.5], [130, 0, 2600], [24, 5.5], [70, 0, -800], [30, -6], [60, 3], [90, 0], [14, -8], [90, 0]] },
+        { name: 'Сузука', sky: ['#62b6dc', '#ffe6d2'], hills: '#7d9fa5', grass: ['#47a267', '#3f945c'], props: ['oak', 'wheel', 'stand', 'board', 'forest', 'house'], panorama: 'sky-day', plan: [[120, 0], [24, 5], [10, -4.5], [10, 4.5], [10, -4.5], [60, 0, 1000], [18, 6.5], [80, 0], [14, -8], [130, 0, -1000], [40, -3.2], [100, 0], [12, 6]] },
+        { name: 'Сингапур', sky: ['#080a22', '#3a2a66'], hills: '#232846', grass: ['#1d3446', '#1a2f40'], night: true, props: ['block', 'tall', 'skyline', 'tower', 'stand', 'board'], panorama: 'sky-night', plan: [[110, 0], [12, 7], [12, -6], [80, 0], [14, 8], [120, 0], [14, -7], [40, 0], [12, 7], [12, -7], [60, 0], [14, 9], [100, 0], [14, -6]] }
     ];
     const GP_TYRES = [
         { name: 'Мягкие', mark: 'С', color: '#ff3b4e', pace: 1, grip: 1.1, life: 2.3 },
@@ -2564,6 +3148,8 @@ window.Games = (() => {
         const SKILL = [0.82, 0.88, 0.93];
         const SLIDE = [0.8, 1, 1.1]; // На лёгком в поворотах держит лучше
         const SLOT = [5, 7, 9];
+        let litBefore = 0;
+        let bumpAt = 0;
         const SEAM = 0.7; // Нахлёст сегментов, чтобы между ними не просвечивал фон
         const WALL = 1.75; // За стеной трасса заканчивается
         const smoke = particles(70);
@@ -2653,6 +3239,7 @@ window.Games = (() => {
         const topSpeed = (boost) => TOP * GP_TYRES[tyre].pace * (1 - 0.1 * Math.min(1.2, wear) ** 2) * (boost ? 1.07 : 1);
 
         const finishRace = () => {
+            Sound.play('win');
             const order = [...cars, me].sort((a, b) => b.dist - a.dist);
             const place = order.indexOf(me) + 1;
             const { f1 } = data;
@@ -2751,6 +3338,10 @@ window.Games = (() => {
                 const gap = car.dist - me.dist;
                 if (gap > 0 && gap < CAR_LEN && Math.abs(car.x - me.x) < 0.42 && me.speed > car.speed) {
                     me.speed = car.speed * 0.93;
+                    if (performance.now() - bumpAt > 400) {
+                        bumpAt = performance.now();
+                        Sound.play('bump', { volume: 0.6 });
+                    }
                     me.x += me.x > car.x ? 0.08 : -0.08;
                 }
             }
@@ -2865,8 +3456,10 @@ window.Games = (() => {
                 const width = height * prop.w / prop.h;
                 if (height < 3 || spot.x + width / 2 < 0 || spot.x - width / 2 > W) continue;
                 const narrow = item.key === 'arch' ? spot.w * 2.2 * 2 : width; // Арка стоит над всей трассой
+                const image = gpProp(item.key);
+                if (!image) continue; // Картинка ещё грузится
                 c.globalAlpha = fade;
-                c.drawImage(gpProp(item.key), spot.x - narrow / 2, spot.y - height, narrow, height);
+                c.drawImage(image, spot.x - narrow / 2, spot.y - height, narrow, height);
                 c.globalAlpha = 1;
             }
             if (seg.warn) {
@@ -2937,7 +3530,14 @@ window.Games = (() => {
             gradient.addColorStop(1, round.sky[1]);
             c.fillStyle = gradient;
             c.fillRect(0, 0, W, H);
-            scroll(c, cloudLayer(), sky * 0.35, 12);
+            const panorama = round.panorama && picture(`assets/gp/${round.panorama}.png`);
+            if (panorama) {
+                // Панорама 640 на 480: её линия гор встаёт на горизонт трассы и медленно едет в поворотах
+                const height = 300;
+                const width = height * 640 / 480;
+                const from = -wrap(sky * 0.6, width);
+                for (let x = from; x < W; x += width) c.drawImage(panorama, x, HORIZON + 46 - height, width + 1, height);
+            } else scroll(c, cloudLayer(), sky * 0.35, 12);
             if (round.sun) {
                 const glow = c.createRadialGradient(250, HORIZON - 34, 4, 250, HORIZON - 34, 90);
                 glow.addColorStop(0, round.sun);
@@ -2945,7 +3545,7 @@ window.Games = (() => {
                 c.fillStyle = glow;
                 c.fillRect(150, HORIZON - 130, 200, 180);
             }
-            scroll(c, hillsLayer(), sky, HORIZON - 108);
+            if (!panorama || round.night || round.name === 'Монако') scroll(c, hillsLayer(), sky, HORIZON - 108);
             c.fillStyle = round.grass[0];
             c.fillRect(0, HORIZON + 10, W, H - HORIZON);
         };
@@ -3149,6 +3749,7 @@ window.Games = (() => {
                 braking = false;
                 sky = 0;
                 lightsLeft = LIGHTS_TIME;
+                litBefore = 0;
                 touches.clear();
                 paintHud();
             },
@@ -3182,6 +3783,9 @@ window.Games = (() => {
             update(dt) {
                 if (lightsLeft > 0) {
                     lightsLeft -= dt;
+                    const lit = lightsLeft <= 0 ? 0 : Math.min(5, Math.floor((LIGHTS_TIME - lightsLeft) / 0.6) + 1);
+                    if (lit !== litBefore) Sound.tone(lit ? 520 : 1040, lit ? 0.14 : 0.3, 'square', 0.08);
+                    litBefore = lit;
                     return;
                 }
                 cars.forEach((car) => moveRival(car, dt));
@@ -3304,7 +3908,10 @@ window.Games = (() => {
         let goAt = 0;
         let series = [];
 
-        const light = (count) => lamps.forEach((lamp, i) => lamp.classList.toggle('on', i < count));
+        const light = (count) => {
+            lamps.forEach((lamp, i) => lamp.classList.toggle('on', i < count));
+            if (count) Sound.tone(520, 0.14, 'square', 0.08);
+        };
         const paintHud = () => shell.hud(data.best.lights === undefined ? 'Рекорда пока нет' : `Рекорд ${data.best.lights} мс`);
         const say = (head, text) => {
             time.textContent = head;
@@ -3325,6 +3932,7 @@ window.Games = (() => {
             phase = 'done';
             series = [];
             say('Фальстарт', 'Огни ещё не погасли. Коснись, чтобы попробовать снова');
+            Sound.play('lose');
         };
         const arm = () => {
             phase = 'arm';
@@ -3351,6 +3959,7 @@ window.Games = (() => {
             phase = 'done';
             series = [...series, ms].slice(-SERIES);
             const fresh = fastest('lights', ms);
+            Sound.play(fresh ? 'win' : 'select');
             paintHud();
             const average = Math.round(series.reduce((sum, value) => sum + value, 0) / series.length);
             say(`${ms} мс`, `${verdict(ms)}${fresh ? ', новый рекорд' : ''}. Среднее за ${series.length}: ${average} мс`);
@@ -3415,9 +4024,9 @@ window.Games = (() => {
         }
     ];
     const DRIFT_RIVALS = [
-        { name: 'Кобальт', color: '#2f6bff', skill: 1, kind: 'sport' },
-        { name: 'Сирокко', color: '#e63946', skill: 0.96, kind: 'sedan' },
-        { name: 'Вихрь', color: '#2ec4b6', skill: 0.92, kind: 'sport' }
+        { name: 'Кобальт', color: '#2f6bff', skill: 1, kind: 'sport', car: 'car_blue_2' },
+        { name: 'Сирокко', color: '#e63946', skill: 0.96, kind: 'sedan', car: 'car_red_3' },
+        { name: 'Вихрь', color: '#2ec4b6', skill: 0.92, kind: 'sport', car: 'car_green_5' }
     ];
     const lapClock = (seconds) => `${Math.floor(seconds / 60)}:${(seconds % 60).toFixed(1).padStart(4, '0')}`;
 
@@ -3442,8 +4051,13 @@ window.Games = (() => {
         const NOS_BTN = { x: W - 34, y: H - 150, r: 27 };
         const smoke = particles(160);
         const sparks = particles(60);
+        const screech = Sound.hiss(1500);
+        const OIL_R = 26;
         const touches = new Map();
         let track, pts, length, path, edges, kerbs, zones, props, barrier, map, cones;
+        let oils = [];
+        let oily = 0;
+        let litBefore = 0;
         let me, rivals, ghost, record, recordAt, lapStart, lapBest, clock, lights, steer, score, pending, combo, chain, calm, nitro, nitroOn, popups, skids, shake, camX, camY, zoom, finished;
 
         // --- Трасса ---
@@ -3610,6 +4224,14 @@ window.Games = (() => {
                 }
                 if (used.length === 4) break;
             }
+            // Масляные пятна на прямых: сцепление почти пропадает
+            oils = [];
+            const straight = pts.map((p, i) => i).filter((i) => i > 60 && i < pts.length - 60 && Math.abs(pts[i].curve) < 0.001);
+            for (let n = 0; n < 3 && straight.length; n++) {
+                const p = pts[straight[Math.floor(noise(n * 7 + pts.length) * straight.length)]];
+                const side = (noise(n * 3 + 1) - 0.5) * track.half;
+                oils.push({ x: p.x + p.nx * side, y: p.y + p.ny * side, a: noise(n) * 6 });
+            }
         };
         // Ближайшая точка трассы ищется рядом с прошлой, так быстрее
         const locate = (x, y, hint) => {
@@ -3659,6 +4281,7 @@ window.Games = (() => {
         const paintHud = () => hud(`P${placeOf()} · Круг ${clamp(me.lap + 1, 1, DRIFT_LAPS)}/${DRIFT_LAPS} · ${score}`);
 
         const endRace = () => {
+            Sound.play('win');
             bank();
             finished = true;
             const place = placeOf();
@@ -3726,7 +4349,11 @@ window.Games = (() => {
             if (Math.abs(slide) > MAX_SLIP && forward > 60) me.a = course - Math.sign(slide) * MAX_SLIP;
             slide = Math.atan2(Math.sin(course - me.a), Math.cos(course - me.a));
             const countering = steer * slide > 0.05 && Math.abs(slide) > 0.15;
-            const grip = GRIP * track.grip * (off ? track.offGrip : 1) * (hand ? 0.3 : 1) * (countering ? COUNTER : 1);
+            if (oils.some((oil) => Math.hypot(oil.x - me.x, oil.y - me.y) < OIL_R)) {
+                if (oily <= 0) popup('Масло', '#9aa3b5');
+                oily = 0.8;
+            }
+            const grip = GRIP * track.grip * (off ? track.offGrip : 1) * (hand ? 0.3 : 1) * (countering ? COUNTER : 1) * (oily > 0 ? 0.35 : 1);
             lateral *= Math.exp(-grip * dt);
             me.vx = fx * forward + sx * lateral;
             me.vy = fy * forward + sy * lateral;
@@ -3755,6 +4382,7 @@ window.Games = (() => {
                     me.vy *= keep;
                 }
                 if (into > 60) {
+                    Sound.play('wall', { volume: Math.min(1, into / 300) });
                     shake = 0.25;
                     lose('Удар');
                     for (let n = 0; n < 12; n++) sparks.add(me.x + p.nx * side * 14, me.y + p.ny * side * 14, (Math.random() - 0.5) * 260, (Math.random() - 0.5) * 260, 0.4, 2, '#ffb84a');
@@ -3766,7 +4394,10 @@ window.Games = (() => {
             me.i = now.i;
             if (before > pts.length * 0.7 && me.i < pts.length * 0.3) {
                 me.lap++;
-                if (me.lap > 0) lapDone();
+                if (me.lap > 0) {
+                    lapDone();
+                    Sound.play('select');
+                }
                 if (me.lap >= DRIFT_LAPS) return endRace();
                 if (me.lap === 0) lapStart = clock;
             } else if (before < pts.length * 0.3 && me.i > pts.length * 0.7) me.lap--;
@@ -3833,7 +4464,10 @@ window.Games = (() => {
                     me.vx += nx * closing * 0.6;
                     me.vy += ny * closing * 0.6;
                     rival.speed = Math.max(0, rival.speed - closing * 0.4);
-                    if (closing > 40) lose('Контакт');
+                    if (closing > 40) {
+                        lose('Контакт');
+                        Sound.play('bump', { volume: 0.6 });
+                    }
                 }
             }
         };
@@ -3842,6 +4476,7 @@ window.Games = (() => {
             for (const cone of cones) {
                 if (!cone.hit && Math.hypot(cone.x - me.x, cone.y - me.y) < CAR_R + 6) {
                     cone.hit = true;
+                    Sound.play('cone');
                     cone.vx = me.vx * 0.9 + (Math.random() - 0.5) * 120;
                     cone.vy = me.vy * 0.9 + (Math.random() - 0.5) * 120;
                     cone.spin = (Math.random() - 0.5) * 20;
@@ -4018,20 +4653,32 @@ window.Games = (() => {
             }
             c.stroke();
 
-            for (const tyre of barrier) if (inView(tyre.x, tyre.y)) stamp(c, tyreSprite(), tyre.x, tyre.y);
+            barrier.forEach((tyre, i) => {
+                if (inView(tyre.x, tyre.y) && !kenney(c, 'objects', i % 4 < 2 ? 'tires_red' : 'tires_white', tyre.x, tyre.y, 16, 16)) stamp(c, tyreSprite(), tyre.x, tyre.y);
+            });
+            for (const oil of oils) {
+                if (!inView(oil.x, oil.y)) continue;
+                c.save();
+                c.translate(oil.x, oil.y);
+                c.rotate(oil.a);
+                kenney(c, 'objects', 'oil', 0, 0, OIL_R * 2.2, OIL_R * 1.8);
+                c.restore();
+            }
             for (const cone of cones) {
                 if (!inView(cone.x, cone.y)) continue;
                 c.save();
                 c.translate(cone.x, cone.y);
                 c.rotate(cone.a);
-                stamp(c, coneSprite(), 0, 0);
+                if (!kenney(c, 'objects', 'cone_straight', 0, 0, 14, 14)) stamp(c, coneSprite(), 0, 0);
                 c.restore();
             }
             const shadow = ghostAt();
             if (shadow) carAt(c, topCar('sport', '#d7dbe8'), shadow[0], shadow[1], shadow[2], 0.35);
             smoke.draw(c);
-            for (const rival of rivals) if (inView(rival.x, rival.y)) carAt(c, topCar(rival.kind, rival.color), rival.x, rival.y, rival.a);
-            carAt(c, topCar('sport', theme.accent), me.x, me.y, me.a);
+            for (const rival of rivals) {
+                if (inView(rival.x, rival.y) && !paintKenneyCar(c, rival.car, rival.x, rival.y, 36, rival.a)) carAt(c, topCar(rival.kind, rival.color), rival.x, rival.y, rival.a);
+            }
+            if (!paintKenneyCar(c, myCar().name, me.x, me.y, 37, me.a)) carAt(c, topCar('sport', theme.accent), me.x, me.y, me.a);
             sparks.draw(c);
             for (const item of props) {
                 if (!inView(item.x, item.y)) continue;
@@ -4039,9 +4686,9 @@ window.Games = (() => {
                     c.save();
                     c.translate(item.x, item.y);
                     c.rotate(item.angle);
-                    stamp(c, standSprite(), 0, 0);
+                    if (!paintKenneyProp(c, 'tribune', 0, 0)) stamp(c, standSprite(), 0, 0);
                     c.restore();
-                } else stamp(c, topProp(item.kind), item.x, item.y);
+                } else if (!paintKenneyProp(c, item.kind, item.x, item.y, item.angle)) stamp(c, topProp(item.kind), item.x, item.y);
             }
             return inView;
         };
@@ -4184,6 +4831,8 @@ window.Games = (() => {
                     build();
                 }
                 placeCones();
+                oily = 0;
+                litBefore = 0;
                 const level = SKILL[data.level.drift ?? 1];
                 const grid = (dist, offset) => {
                     const at = sample(dist, offset);
@@ -4241,13 +4890,18 @@ window.Games = (() => {
                 smoke.step(dt);
                 sparks.step(dt);
                 shake = Math.max(0, shake - dt);
+                oily = Math.max(0, oily - dt);
                 if (lights > 0) {
                     lights -= dt;
+                    const lit = lights <= 0 ? 0 : Math.min(3, Math.floor((LIGHTS - lights) / 0.9) + 1);
+                    if (lit !== litBefore) Sound.tone(lit ? 520 : 1040, lit ? 0.14 : 0.3, 'square', 0.08);
+                    litBefore = lit;
                     return;
                 }
                 clock += dt;
                 rivals.forEach((rival) => driveRival(rival, dt));
                 driveMe(dt);
+                screech.set(me.slip > SLIP && me.speed > 120 ? clamp((me.slip - 0.2) * 1.6, 0, 1) * me.speed / TOP : 0);
                 if (finished) return;
                 moveCones(dt);
                 if (me.lap >= 0) {
@@ -4360,6 +5014,7 @@ window.Games = (() => {
             <button type="button" class="round-btn" data-back aria-label="Все игры" title="Все игры">${ICON_HREF('back')}</button>
             <b class="game-title">${game.title}</b>
             <span class="game-hud" aria-live="off"></span>
+            <button type="button" class="round-btn" data-sound aria-label="Звук" title="Звук" aria-pressed="${data.sound !== false}">${ICON_HREF(data.sound === false ? 'mute' : 'sound')}</button>
             <button type="button" class="round-btn" data-pause aria-label="Пауза" title="Пауза" hidden>${ICON_HREF('pause')}</button>
             <button type="button" class="round-btn" data-restart aria-label="Начать заново" title="Начать заново">${ICON_HREF('repeat')}</button>
         </div>`;
@@ -4385,6 +5040,14 @@ window.Games = (() => {
             paintMenu();
         } else if ('restart' in target.dataset) current?.restart();
         else if ('pause' in target.dataset) current?.togglePause();
+        else if ('sound' in target.dataset) {
+            data.sound = data.sound === false;
+            save();
+            if (!data.sound) Sound.hush();
+            target.setAttribute('aria-pressed', String(data.sound));
+            target.querySelector('use').setAttribute('href', `#i-${data.sound ? 'sound' : 'mute'}`);
+            Sound.play('click');
+        }
     });
 
     for (const type of ['keydown', 'keyup']) {
