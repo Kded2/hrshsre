@@ -1046,7 +1046,22 @@ document.addEventListener('DOMContentLoaded', () => {
         clearTimeout(enterTimer);
         enterTimer = setTimeout(() => view.classList.remove('entering'), 700); // Иначе анимация повторится при каждой перерисовке
         window.scrollTo({ top: 0 });
+        // На узком экране неделя листается вбок: сразу показываем сегодняшний день
+        const today = view.querySelector('.week-day.today');
+        if (today) today.parentNode.scrollLeft += today.getBoundingClientRect().left - today.parentNode.getBoundingClientRect().left - 16;
     };
+
+    // Колесо мыши листает горизонтальные ленты: полосы прокрутки у них скрыты
+    document.addEventListener('wheel', (e) => {
+        const strip = e.target.closest?.('.rail, .week, .chips-scroll');
+        if (!strip || e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+        const room = strip.scrollWidth - strip.clientWidth;
+        if (room <= 0) return;
+        const next = clamp(strip.scrollLeft + e.deltaY, 0, room);
+        if (next === strip.scrollLeft) return; // На краю ленты страница листается как обычно
+        e.preventDefault();
+        strip.scrollLeft = next;
+    }, { passive: false });
 
     const stopSelecting = () => {
         state.selecting = false;

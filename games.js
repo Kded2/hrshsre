@@ -42,6 +42,16 @@ window.Games = (() => {
         save();
     };
 
+    // Монеты общие для всех игр: копятся за партии и тратятся в гараже «Гонок»
+    const COIN_CAP = 60; // Потолок за одну партию, чтобы гараж не покупался за вечер
+    const earn = (amount) => {
+        const coins = clamp(Math.round(amount), 0, COIN_CAP);
+        if (!coins) return '';
+        data.race.cash += coins;
+        save();
+        return ` (монеты +${coins})`;
+    };
+
     // --- Утилиты ---
     const make = (html) => {
         const box = document.createElement('div');
@@ -595,7 +605,7 @@ window.Games = (() => {
                     Sound.play('lose', { volume: 0.6 });
                     if (!lives) {
                         const fresh = record('breakout', points);
-                        return finish('Конец игры', `Счёт ${points}, уровень ${level}${fresh ? ', новый рекорд!' : ''}`);
+                        return finish('Конец игры', `Счёт ${points}, уровень ${level}${fresh ? ', новый рекорд!' : ''}${earn(points / 40)}`);
                     }
                     wide = 0;
                     slow = 0;
@@ -723,7 +733,7 @@ window.Games = (() => {
             const won = wins >= GOAL;
             tally('pong', won ? 'win' : 'lose');
             if (won) Sound.play('win');
-            finish(won ? 'Победа' : 'Поражение', `Счёт ${wins} : ${losses}`);
+            finish(won ? 'Победа' : 'Поражение', `Счёт ${wins} : ${losses}${earn(won ? 25 : 5)}`);
         };
         const paintPaddle = (c, name, x, y, color) => {
             const image = art(name);
@@ -1909,7 +1919,7 @@ window.Games = (() => {
                 paintHud();
                 Sound.play('lose');
                 falling.push({ x: moving.x, w: moving.w, y: screenY(blocks.length) - view, speed: 0, index: blocks.length });
-                finish('Башня упала', `Этажей ${floors}${fresh && floors ? ', новый рекорд!' : ''}`);
+                finish('Башня упала', `Этажей ${floors}${fresh && floors ? ', новый рекорд!' : ''}${earn(floors * 1.5)}`);
                 return true;
             }
             let x = left;
@@ -2035,7 +2045,7 @@ window.Games = (() => {
         const board = el.querySelector('.merge-board');
         const status = el.querySelector('.game-status');
         const undoButton = el.querySelector('[data-undo]');
-        let grid, points, nextId, over, won, start, history, undos;
+        let grid, points, nextId, over, won, start, history, undos, paid;
 
         const tiles = () => grid.flat().filter(Boolean);
         const paintHud = () => shell.hud(`Счёт ${points} · Рекорд ${data.best.merge || 0}`);
@@ -2155,7 +2165,9 @@ window.Games = (() => {
             if (stuck()) {
                 over = true;
                 Sound.play('lose');
-                status.textContent = `Ходов больше нет. Счёт ${points}${undos ? '. Можно отменить ход' : ''}`;
+                // После отмены хода партия кончается повторно, а монеты за неё даются один раз
+                status.textContent = `Ходов больше нет. Счёт ${points}${paid ? '' : earn(points / 150)}${undos ? '. Можно отменить ход' : ''}`;
+                paid = true;
             }
         };
         const restart = () => {
@@ -2166,6 +2178,7 @@ window.Games = (() => {
             won = false;
             history = [];
             undos = UNDOS;
+            paid = false;
             board.querySelectorAll('.merge-tile').forEach((node) => node.remove());
             status.textContent = touchScreen() ? 'Проводи пальцем, чтобы сдвинуть плитки' : 'Стрелки или WASD сдвигают плитки';
             addTile();
@@ -2285,7 +2298,7 @@ window.Games = (() => {
                 const fresh = record(key(), done);
                 Sound.play('lose');
                 phase = 'idle';
-                status.textContent = `Ошибка. Серия ${done}${fresh ? ', новый рекорд!' : ''}`;
+                status.textContent = `Ошибка. Серия ${done}${fresh ? ', новый рекорд!' : ''}${earn(done * 2)}`;
                 begin.hidden = false;
                 begin.textContent = 'Ещё раз';
                 paintHud();
@@ -2432,7 +2445,7 @@ window.Games = (() => {
                     data.best[key] = seconds;
                     save();
                 }
-                status.textContent = `Поле очищено за ${clock(seconds)}${fresh ? ', новый рекорд!' : ''}`;
+                status.textContent = `Поле очищено за ${clock(seconds)}${fresh ? ', новый рекорд!' : ''}${earn([15, 30, 60][data.level.mines ?? 0])}`;
             }
             paint();
         };
@@ -2795,6 +2808,7 @@ window.Games = (() => {
             if (!meOut && !aiOut) return;
             g.over = meOut && aiOut ? 'draw' : meOut ? 'win' : 'lose';
             tally('durak', g.over);
+            g.coins = earn({ win: 30, draw: 12, lose: 5 }[g.over]);
         };
         const closeRound = () => {
             g.taking = false;
@@ -3028,7 +3042,7 @@ window.Games = (() => {
                         ${handRow(hand)}
                     </div>
                 </section>
-                <p class="game-status" role="status">${g.over ? { win: 'Победа! Дурак сегодня компьютер', lose: 'Поражение: ты остался дураком', draw: 'Ничья' }[g.over] : statusText()}</p>
+                <p class="game-status" role="status">${g.over ? { win: 'Победа! Дурак сегодня компьютер', lose: 'Поражение: ты остался дураком', draw: 'Ничья' }[g.over] + (g.coins || '') : statusText()}</p>
                 <div class="game-buttons">
                     ${iDefend ? '<button type="button" class="btn" data-take>Беру</button>' : ''}
                     ${pickedMoves?.transfer ? '<button type="button" class="btn btn-primary" data-transfer>Перевести</button>' : ''}
@@ -3264,6 +3278,7 @@ window.Games = (() => {
                 f1.points = {};
             }
             save();
+            text += earn(Math.max(5, 44 - place * 4)); // За победу в гонке 40 монет, дальше меньше
             finish(title, text, over ? 'Новый сезон' : 'Следующий этап');
         };
 
@@ -3962,7 +3977,7 @@ window.Games = (() => {
             Sound.play(fresh ? 'win' : 'select');
             paintHud();
             const average = Math.round(series.reduce((sum, value) => sum + value, 0) / series.length);
-            say(`${ms} мс`, `${verdict(ms)}${fresh ? ', новый рекорд' : ''}. Среднее за ${series.length}: ${average} мс`);
+            say(`${ms} мс`, `${verdict(ms)}${fresh ? ', новый рекорд' : ''}. Среднее за ${series.length}: ${average} мс${earn(ms < 300 ? 3 : 1)}`);
         };
         const press = (stamp) => {
             if (phase === 'idle' || phase === 'done') arm();
@@ -4294,7 +4309,7 @@ window.Games = (() => {
             save();
             const title = place === 1 ? `${track.name}: победа` : `${track.name}: P${place}`;
             const lap = lapBest ? `, лучший круг ${lapClock(lapBest)}` : '';
-            finish(title, `Очки дрифта ${score}${fresh ? ', рекорд трассы' : ''}${lap}${opened ? `. Открыта трасса «${DRIFT_TRACKS[index + 1].name}»` : place > 3 ? '. Финишируй в тройке, чтобы открыть следующую трассу' : ''}`);
+            finish(title, `Очки дрифта ${score}${fresh ? ', рекорд трассы' : ''}${lap}${opened ? `. Открыта трасса «${DRIFT_TRACKS[index + 1].name}»` : place > 3 ? '. Финишируй в тройке, чтобы открыть следующую трассу' : ''}${earn(10 + Math.max(0, 4 - place) * 10)}`);
         };
 
         const lapDone = () => {
@@ -4941,8 +4956,1058 @@ window.Games = (() => {
         };
     });
 
+    // --- Змейка ---
+    const snake = arcade(({ hud, held, finish }) => {
+        const CELL = 20;
+        const COLS = 18;
+        const ROWS = 22;
+        const W = COLS * CELL;
+        const H = ROWS * CELL;
+        const DIRS = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] };
+        const BONUS_EVERY = 5; // Каждое пятое яблоко приносит звезду
+        const BONUS_LIFE = 6;
+        const BODY = '#34c759';
+        const bits = particles(90);
+        let body, before, dir, queue, timer, food, bonus, points, eaten, was, swipe;
+
+        const paintHud = () => hud(`Счёт ${points} · Рекорд ${data.best.snake || 0}`);
+        const interval = () => Math.max(0.075, 0.17 - body.length * 0.0022);
+        const taken = (x, y) => body.some((part) => part.x === x && part.y === y) || (food && food.x === x && food.y === y);
+        const freeSpot = () => {
+            let spot;
+            do spot = { x: Math.floor(Math.random() * COLS), y: Math.floor(Math.random() * ROWS) };
+            while (taken(spot.x, spot.y));
+            return spot;
+        };
+        // В очереди до двух поворотов: быстрый двойной поворот не теряется между шагами
+        const turn = (name) => {
+            const last = queue[queue.length - 1] || dir;
+            const next = DIRS[name];
+            if (queue.length >= 2 || (next[0] !== 0) === (last[0] !== 0)) return;
+            queue.push(next);
+        };
+        const burst = (cell, color) => {
+            for (let i = 0; i < 10; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 40 + Math.random() * 90;
+                bits.add(cell.x * CELL + CELL / 2, cell.y * CELL + CELL / 2, Math.cos(angle) * speed, Math.sin(angle) * speed, 0.45, 2.5, color);
+            }
+        };
+        const step = () => {
+            dir = queue.shift() || dir;
+            const head = { x: body[0].x + dir[0], y: body[0].y + dir[1] };
+            const tail = body[body.length - 1];
+            const bitten = body.some((part) => part !== tail && part.x === head.x && part.y === head.y);
+            if (head.x < 0 || head.y < 0 || head.x >= COLS || head.y >= ROWS || bitten) {
+                const fresh = record('snake', points);
+                paintHud();
+                Sound.play('crash');
+                finish('Змейка врезалась', `Счёт ${points}${fresh && points ? ', новый рекорд!' : ''}${earn(points / 10)}`);
+                return false;
+            }
+            before = body.map((part) => ({ ...part }));
+            body.unshift(head);
+            if (food.x === head.x && food.y === head.y) {
+                points += 10;
+                eaten++;
+                before.push({ ...tail });
+                burst(head, '#ef4444');
+                Sound.play('coin', { volume: 0.5 });
+                food = null;
+                food = freeSpot();
+                if (eaten % BONUS_EVERY === 0) bonus = { ...freeSpot(), life: BONUS_LIFE };
+            } else {
+                body.pop();
+                if (bonus && bonus.x === head.x && bonus.y === head.y) {
+                    points += 50;
+                    burst(head, '#facc15');
+                    Sound.play('boost', { volume: 0.6 });
+                    bonus = null;
+                }
+            }
+            paintHud();
+            return true;
+        };
+
+        return {
+            width: W,
+            height: H,
+            vertical: true,
+            hintKeys: 'Стрелки или WASD поворачивают змейку. Звезда даёт 50 очков, но быстро исчезает',
+            hintTouch: 'Проводи пальцем в сторону поворота. Звезда даёт 50 очков, но быстро исчезает',
+            reset() {
+                body = [{ x: 9, y: 12 }, { x: 8, y: 12 }, { x: 7, y: 12 }];
+                before = body.map((part) => ({ ...part }));
+                dir = DIRS.right;
+                queue = [];
+                timer = 0;
+                points = 0;
+                eaten = 0;
+                food = null;
+                food = freeSpot();
+                bonus = null;
+                was = {};
+                swipe = null;
+                bits.clear();
+                paintHud();
+            },
+            release() {
+                swipe = null;
+            },
+            pointer(type, x, y) {
+                if (type === 'pointerdown') swipe = [x, y];
+                else if (type === 'pointermove' && swipe) {
+                    const dx = x - swipe[0];
+                    const dy = y - swipe[1];
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
+                    turn(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up'));
+                    swipe = [x, y];
+                } else if (type !== 'pointermove') swipe = null;
+            },
+            update(dt) {
+                for (const name of Object.keys(DIRS)) {
+                    if (held[name] && !was[name]) turn(name);
+                    was[name] = held[name];
+                }
+                bits.step(dt);
+                if (bonus && (bonus.life -= dt) <= 0) bonus = null;
+                timer += dt;
+                while (timer >= interval()) {
+                    timer -= interval();
+                    if (!step()) return;
+                }
+            },
+            draw(c, theme) {
+                c.fillStyle = theme.tint;
+                c.fillRect(0, 0, W, H);
+                for (let y = 0; y < ROWS; y++) {
+                    for (let x = y % 2; x < COLS; x += 2) c.fillRect(x * CELL, y * CELL, CELL, CELL);
+                }
+                blob(c, food.x * CELL + CELL / 2, food.y * CELL + CELL / 2, 8, '#ef4444');
+                if (bonus && (bonus.life > 2 || Math.floor(bonus.life * 8) % 2)) {
+                    const star = art('star');
+                    const size = 20 + Math.sin(bonus.life * 6) * 2;
+                    const x = bonus.x * CELL + CELL / 2;
+                    const y = bonus.y * CELL + CELL / 2;
+                    if (star) c.drawImage(star, x - size / 2, y - size / 2, size, size);
+                    else blob(c, x, y, 8, '#facc15');
+                }
+                // Между шагами сегменты плавно доезжают до своих клеток
+                const t = clamp(timer / interval(), 0, 1);
+                const spots = body.map((part, i) => {
+                    const from = before[i] || part;
+                    return [(from.x + (part.x - from.x) * t) * CELL + CELL / 2, (from.y + (part.y - from.y) * t) * CELL + CELL / 2];
+                });
+                c.lineCap = 'round';
+                c.lineJoin = 'round';
+                for (const [width, color] of [[CELL - 2, shade(BODY, -0.35)], [CELL - 6, BODY]]) {
+                    c.lineWidth = width;
+                    c.strokeStyle = color;
+                    c.beginPath();
+                    spots.forEach(([x, y], i) => (i ? c.lineTo(x, y) : c.moveTo(x, y)));
+                    c.stroke();
+                }
+                const [hx, hy] = spots[0];
+                blob(c, hx, hy, CELL / 2 - 1, shade(BODY, 0.15));
+                for (const side of [-1, 1]) {
+                    const ex = hx + dir[0] * 3 - dir[1] * 4 * side;
+                    const ey = hy + dir[1] * 3 + dir[0] * 4 * side;
+                    c.fillStyle = '#fff';
+                    c.beginPath();
+                    c.arc(ex, ey, 2.6, 0, Math.PI * 2);
+                    c.fill();
+                    c.fillStyle = '#16161d';
+                    c.beginPath();
+                    c.arc(ex + dir[0], ey + dir[1], 1.3, 0, Math.PI * 2);
+                    c.fill();
+                }
+                bits.draw(c);
+            }
+        };
+    });
+
+    // --- Космос ---
+    const space = arcade(({ hud, held, finish }) => {
+        const W = 360;
+        const H = 520;
+        const SHIP_Y = H - 58;
+        const SHIP_R = 13;
+        const EDGE = 16;
+        const ROCK_R = [0, 13, 21, 31];
+        const ROCK_HP = [0, 1, 2, 4];
+        const DOUBLE_TIME = 10;
+        const POWERS = {
+            double: { color: '#38bdf8', label: '2×' },
+            shield: { color: '#a78bfa', label: 'Щ' },
+            bomb: { color: '#fb923c', label: 'Б' }
+        };
+        const bits = particles(170);
+        let ship, shots, rocks, drops, points, lives, time, fire, spawn, safe, double, shield, drag, shake;
+
+        const paintHud = () => hud(`Счёт ${points} · Жизни ${lives} · Рекорд ${data.best.space || 0}`);
+        const level = () => 1 + Math.floor(time / 18);
+        const addRock = (size, x = 30 + Math.random() * (W - 60), y = -40, vx = (Math.random() - 0.5) * 50) => {
+            rocks.push({ x, y, vx, vy: 55 + Math.random() * 45 + level() * 9, size, r: ROCK_R[size], hp: ROCK_HP[size], spin: (Math.random() - 0.5) * 2, angle: Math.random() * 6, seed: Math.random() * 100 });
+        };
+        const boom = (x, y, count, color) => {
+            for (let i = 0; i < count; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const speed = 30 + Math.random() * 140;
+                bits.add(x, y, Math.cos(angle) * speed, Math.sin(angle) * speed, 0.3 + Math.random() * 0.4, 1.5 + Math.random() * 2, color);
+            }
+        };
+        const destroy = (rock) => {
+            rock.dead = true;
+            points += rock.size * 10;
+            boom(rock.x, rock.y, 6 + rock.size * 5, '#b8b0c8');
+            Sound.play('crash', { volume: 0.3, rate: 1.7 - rock.size * 0.2 });
+            // Большой камень раскалывается на два мелких
+            if (rock.size === 3) {
+                addRock(1, rock.x - 12, rock.y, -70);
+                addRock(1, rock.x + 12, rock.y, 70);
+            }
+            if (Math.random() < 0.1) drops.push({ x: rock.x, y: rock.y, kind: pick(Object.keys(POWERS)) });
+            paintHud();
+        };
+        const hurt = () => {
+            if (safe > 0) return;
+            if (shield) {
+                shield = false;
+                safe = 1;
+                Sound.play('bump');
+                return;
+            }
+            lives--;
+            safe = 1.8;
+            shake = 0.3;
+            boom(ship.x, SHIP_Y, 24, '#fb923c');
+            Sound.play('crash');
+            paintHud();
+            if (lives > 0) return;
+            const fresh = record('space', points);
+            paintHud();
+            finish('Корабль сбит', `Счёт ${points}${fresh && points ? ', новый рекорд!' : ''}${earn(points / 30)}`);
+        };
+        const paintRock = (c, rock) => {
+            c.save();
+            c.translate(rock.x, rock.y);
+            c.rotate(rock.angle);
+            c.beginPath();
+            for (let i = 0; i < 9; i++) {
+                const radius = rock.r * (0.8 + noise(rock.seed + i) * 0.28);
+                const angle = i / 9 * Math.PI * 2;
+                c.lineTo(Math.cos(angle) * radius, Math.sin(angle) * radius);
+            }
+            c.closePath();
+            c.fillStyle = rock.hp < ROCK_HP[rock.size] ? '#8d8499' : '#756d84';
+            c.fill();
+            c.lineWidth = 2;
+            c.strokeStyle = '#4a4458';
+            c.stroke();
+            c.fillStyle = 'rgba(30, 24, 44, 0.35)';
+            for (let i = 0; i < rock.size + 1; i++) {
+                c.beginPath();
+                c.arc((noise(rock.seed + i * 3) - 0.5) * rock.r, (noise(rock.seed + i * 7) - 0.5) * rock.r, rock.r * 0.16, 0, Math.PI * 2);
+                c.fill();
+            }
+            c.restore();
+        };
+        const paintShip = (c) => {
+            const x = ship.x;
+            c.fillStyle = '#fb923c';
+            c.beginPath();
+            c.moveTo(x - 5, SHIP_Y + 9);
+            c.lineTo(x, SHIP_Y + 18 + Math.random() * 9);
+            c.lineTo(x + 5, SHIP_Y + 9);
+            c.fill();
+            const hull = c.createLinearGradient(x - 13, 0, x + 13, 0);
+            hull.addColorStop(0, '#94a3b8');
+            hull.addColorStop(0.5, '#f1f5f9');
+            hull.addColorStop(1, '#94a3b8');
+            c.fillStyle = hull;
+            c.beginPath();
+            c.moveTo(x, SHIP_Y - 19);
+            c.lineTo(x + 14, SHIP_Y + 12);
+            c.lineTo(x, SHIP_Y + 6);
+            c.lineTo(x - 14, SHIP_Y + 12);
+            c.closePath();
+            c.fill();
+            c.fillStyle = '#38bdf8';
+            c.beginPath();
+            c.ellipse(x, SHIP_Y - 4, 3.2, 6, 0, 0, Math.PI * 2);
+            c.fill();
+            if (shield) {
+                c.lineWidth = 2;
+                c.strokeStyle = POWERS.shield.color;
+                c.beginPath();
+                c.arc(x, SHIP_Y - 2, 24, 0, Math.PI * 2);
+                c.stroke();
+            }
+        };
+
+        return {
+            width: W,
+            height: H,
+            hintKeys: 'Стрелки или A и D ведут корабль, мышью его можно тащить. Он стреляет сам. Лови бонусы: двойной выстрел, щит и бомбу',
+            hintTouch: 'Води пальцем, корабль стреляет сам. Лови бонусы: двойной выстрел, щит и бомбу',
+            reset() {
+                ship = { x: W / 2 };
+                shots = [];
+                rocks = [];
+                drops = [];
+                points = 0;
+                lives = 3;
+                time = 0;
+                fire = 0;
+                spawn = 0.6;
+                safe = 1;
+                double = 0;
+                shield = false;
+                drag = null;
+                shake = 0;
+                bits.clear();
+                paintHud();
+            },
+            release() {
+                drag = null;
+            },
+            pointer(type, x) {
+                if (type === 'pointerdown') drag = { start: x, base: ship.x };
+                else if (type === 'pointermove' && drag) ship.x = clamp(drag.base + (x - drag.start) * 1.25, EDGE, W - EDGE);
+                else if (type !== 'pointermove') drag = null;
+            },
+            update(dt) {
+                time += dt;
+                safe -= dt;
+                double -= dt;
+                shake -= dt;
+                ship.x = clamp(ship.x + ((held.right ? 1 : 0) - (held.left ? 1 : 0)) * 300 * dt, EDGE, W - EDGE);
+                if ((fire -= dt) <= 0) {
+                    fire = 0.2;
+                    if (double > 0) shots.push({ x: ship.x - 8, y: SHIP_Y - 10 }, { x: ship.x + 8, y: SHIP_Y - 10 });
+                    else shots.push({ x: ship.x, y: SHIP_Y - 18 });
+                }
+                for (const shot of shots) shot.y -= 540 * dt;
+                if ((spawn -= dt) <= 0) {
+                    spawn = Math.max(0.32, 1.05 - level() * 0.07);
+                    const roll = Math.random();
+                    addRock(roll < 0.5 ? 1 : roll < 0.85 ? 2 : 3);
+                }
+                for (const rock of [...rocks]) {
+                    rock.x += rock.vx * dt;
+                    rock.y += rock.vy * dt;
+                    rock.angle += rock.spin * dt;
+                    if ((rock.x < rock.r && rock.vx < 0) || (rock.x > W - rock.r && rock.vx > 0)) rock.vx *= -1;
+                    if (rock.y > H + 40) rock.dead = true;
+                    for (const shot of shots) {
+                        if (shot.dead || rock.dead || Math.hypot(shot.x - rock.x, shot.y - rock.y) > rock.r + 3) continue;
+                        shot.dead = true;
+                        if (--rock.hp <= 0) destroy(rock);
+                        else boom(shot.x, shot.y, 3, '#e2e8f0');
+                    }
+                    if (!rock.dead && Math.hypot(ship.x - rock.x, SHIP_Y - rock.y) < rock.r + SHIP_R - 3) {
+                        rock.dead = true;
+                        boom(rock.x, rock.y, 10, '#b8b0c8');
+                        hurt();
+                    }
+                }
+                for (const drop of drops) {
+                    drop.y += 110 * dt;
+                    if (Math.hypot(drop.x - ship.x, drop.y - SHIP_Y) > 26) continue;
+                    drop.dead = true;
+                    Sound.play('boost', { volume: 0.6 });
+                    if (drop.kind === 'double') double = DOUBLE_TIME;
+                    else if (drop.kind === 'shield') shield = true;
+                    else rocks.filter((rock) => !rock.dead).forEach(destroy);
+                }
+                shots = shots.filter((shot) => !shot.dead && shot.y > -12);
+                rocks = rocks.filter((rock) => !rock.dead);
+                drops = drops.filter((drop) => !drop.dead && drop.y < H + 20);
+                bits.step(dt);
+            },
+            draw(c) {
+                const sky = c.createLinearGradient(0, 0, 0, H);
+                sky.addColorStop(0, '#070b1d');
+                sky.addColorStop(1, '#1a1140');
+                c.fillStyle = sky;
+                c.fillRect(0, 0, W, H);
+                c.fillStyle = '#fff';
+                for (let i = 0; i < 60; i++) {
+                    const layer = i % 3;
+                    c.globalAlpha = 0.35 + layer * 0.25;
+                    c.fillRect(noise(i) * W, (noise(i + 60) * H + time * (10 + layer * 16)) % H, 1 + layer * 0.5, 1 + layer * 0.5);
+                }
+                c.globalAlpha = 1;
+                c.save();
+                if (shake > 0) c.translate((Math.random() - 0.5) * 8, (Math.random() - 0.5) * 8);
+                c.textAlign = 'center';
+                c.textBaseline = 'middle';
+                c.font = '800 11px system-ui, sans-serif';
+                for (const drop of drops) {
+                    blob(c, drop.x, drop.y, 11, POWERS[drop.kind].color);
+                    c.fillStyle = '#0b1020';
+                    c.fillText(POWERS[drop.kind].label, drop.x, drop.y + 0.5);
+                }
+                c.fillStyle = '#7dd3fc';
+                for (const shot of shots) {
+                    roundRect(c, shot.x - 2, shot.y - 8, 4, 14, 2);
+                    c.fill();
+                }
+                rocks.forEach((rock) => paintRock(c, rock));
+                if (lives > 0 && (safe <= 0 || Math.floor(time * 12) % 2)) paintShip(c);
+                bits.draw(c);
+                c.restore();
+                if (double > 0) {
+                    c.fillStyle = POWERS.double.color;
+                    roundRect(c, 10, 10, 70 * double / DOUBLE_TIME, 4, 2);
+                    c.fill();
+                }
+            }
+        };
+    });
+
+    // --- Кристаллы ---
+    const gems = arcade(({ hud, finish }) => {
+        const COLS = 7;
+        const ROWS = 8;
+        const CELL = 48;
+        const PAD = 12;
+        const W = COLS * CELL + PAD * 2;
+        const H = ROWS * CELL + PAD * 2;
+        const MOVES = 25;
+        const SPEED = 480;
+        const POP = 0.2;
+        const KINDS = ['#ef4444', '#3b82f6', '#22c55e', '#facc15', '#a855f7', '#fb923c'];
+        const bits = particles(140);
+        let grid, phase, after, popTime, picked, press, moves, points, combo, banner;
+
+        const paintHud = () => hud(`Ходы ${moves} · Счёт ${points} · Рекорд ${data.best.gems || 0}`);
+        const gem = () => ({ kind: Math.floor(Math.random() * KINDS.length), ox: 0, oy: 0, pop: 0 });
+        const kindAt = (r, c) => grid[r]?.[c]?.kind;
+        const inside = (cell) => cell.r >= 0 && cell.c >= 0 && cell.r < ROWS && cell.c < COLS;
+        const matches = () => {
+            const found = new Set();
+            let long = false;
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    const kind = kindAt(r, c);
+                    for (const [dr, dc] of [[0, 1], [1, 0]]) {
+                        if (kindAt(r - dr, c - dc) === kind) continue; // Ряд считаем один раз, с его начала
+                        let length = 1;
+                        while (kindAt(r + dr * length, c + dc * length) === kind) length++;
+                        if (length < 3) continue;
+                        if (length > 3) long = true;
+                        for (let i = 0; i < length; i++) found.add((r + dr * i) * COLS + c + dc * i);
+                    }
+                }
+            }
+            return { found, long };
+        };
+        const swap = (a, b) => {
+            [grid[a.r][a.c], grid[b.r][b.c]] = [grid[b.r][b.c], grid[a.r][a.c]];
+        };
+        const hasMoves = () => {
+            for (let r = 0; r < ROWS; r++) {
+                for (let c = 0; c < COLS; c++) {
+                    for (const other of [{ r, c: c + 1 }, { r: r + 1, c }]) {
+                        if (!inside(other)) continue;
+                        swap({ r, c }, other);
+                        const good = matches().found.size > 0;
+                        swap({ r, c }, other);
+                        if (good) return true;
+                    }
+                }
+            }
+            return false;
+        };
+        const fill = () => {
+            do {
+                grid = Array.from({ length: ROWS }, () => []);
+                for (let r = 0; r < ROWS; r++) {
+                    for (let c = 0; c < COLS; c++) {
+                        let item;
+                        do item = gem();
+                        while ((kindAt(r, c - 1) === item.kind && kindAt(r, c - 2) === item.kind) || (kindAt(r - 1, c) === item.kind && kindAt(r - 2, c) === item.kind));
+                        grid[r][c] = item;
+                    }
+                }
+            } while (!hasMoves());
+        };
+        const settle = () => {
+            const { found, long } = matches();
+            if (found.size) {
+                combo++;
+                points += found.size * 10 * combo;
+                if (long) {
+                    moves++;
+                    banner = { text: '+1 ход', life: 1 };
+                } else if (combo > 1) banner = { text: `Комбо ×${combo}`, life: 0.9 };
+                Sound.tone(392 * 2 ** (Math.min(combo, 8) / 6), 0.16, 'triangle', 0.13);
+                for (const index of found) {
+                    const r = Math.floor(index / COLS);
+                    const c = index % COLS;
+                    grid[r][c].pop = POP;
+                    for (let i = 0; i < 4; i++) {
+                        const angle = Math.random() * Math.PI * 2;
+                        bits.add(PAD + c * CELL + CELL / 2, PAD + r * CELL + CELL / 2, Math.cos(angle) * 90, Math.sin(angle) * 90, 0.4, 2.5, KINDS[grid[r][c].kind]);
+                    }
+                }
+                phase = 'pop';
+                popTime = POP;
+                paintHud();
+                return;
+            }
+            if (moves <= 0) {
+                phase = 'over';
+                const fresh = record('gems', points);
+                paintHud();
+                Sound.play(fresh ? 'win' : 'select');
+                finish('Ходы закончились', `Счёт ${points}${fresh && points ? ', новый рекорд!' : ''}${earn(points / 60)}`);
+                return;
+            }
+            if (!hasMoves()) {
+                fill();
+                banner = { text: 'Ходов не было, перемешали', life: 1.4 };
+            }
+            phase = 'idle';
+        };
+        // Камни над пустотой падают вниз, сверху приходят новые
+        const collapse = () => {
+            for (let c = 0; c < COLS; c++) {
+                let write = ROWS - 1;
+                for (let r = ROWS - 1; r >= 0; r--) {
+                    const item = grid[r][c];
+                    if (item.pop) continue;
+                    item.oy -= (write - r) * CELL;
+                    grid[write][c] = item;
+                    write--;
+                }
+                const missing = write + 1;
+                for (let r = write; r >= 0; r--) {
+                    grid[r][c] = gem();
+                    grid[r][c].oy = -missing * CELL;
+                }
+            }
+            phase = 'move';
+            after = settle;
+        };
+        const trySwap = (a, b) => {
+            if (phase !== 'idle') return;
+            picked = null;
+            const slide = () => {
+                swap(a, b);
+                Object.assign(grid[a.r][a.c], { ox: (b.c - a.c) * CELL, oy: (b.r - a.r) * CELL });
+                Object.assign(grid[b.r][b.c], { ox: (a.c - b.c) * CELL, oy: (a.r - b.r) * CELL });
+            };
+            slide();
+            Sound.play('slide', { volume: 0.3 });
+            phase = 'move';
+            after = () => {
+                if (matches().found.size) {
+                    moves--;
+                    combo = 0;
+                    settle();
+                    return;
+                }
+                // Ход без совпадения возвращается назад
+                slide();
+                Sound.play('bump', { volume: 0.4 });
+                phase = 'move';
+                after = () => { phase = 'idle'; };
+            };
+        };
+        const approach = (value, step) => (Math.abs(value) <= step ? 0 : value - Math.sign(value) * step);
+        const cellAt = (x, y) => {
+            const cell = { r: Math.floor((y - PAD) / CELL), c: Math.floor((x - PAD) / CELL) };
+            return inside(cell) ? cell : null;
+        };
+        const SHAPES = [
+            (c, s) => c.arc(0, 0, s, 0, Math.PI * 2),
+            (c, s) => { c.moveTo(0, -s * 1.15); c.lineTo(s * 0.95, 0); c.lineTo(0, s * 1.15); c.lineTo(-s * 0.95, 0); },
+            (c, s) => roundRect(c, -s * 0.9, -s * 0.9, s * 1.8, s * 1.8, s * 0.35),
+            (c, s) => { c.moveTo(0, -s * 1.05); c.lineTo(s * 1.1, s * 0.9); c.lineTo(-s * 1.1, s * 0.9); },
+            (c, s) => { for (let i = 0; i < 6; i++) c.lineTo(Math.cos(i * Math.PI / 3) * s * 1.08, Math.sin(i * Math.PI / 3) * s * 1.08); },
+            (c, s) => { for (let i = 0; i < 10; i++) c.lineTo(Math.sin(i * Math.PI / 5) * s * (i % 2 ? 0.55 : 1.2), -Math.cos(i * Math.PI / 5) * s * (i % 2 ? 0.55 : 1.2)); }
+        ];
+        const paintGem = (c, item, x, y) => {
+            const size = 16 * (item.pop ? item.pop / POP : 1);
+            const color = KINDS[item.kind];
+            c.save();
+            c.translate(x, y);
+            const fill = c.createLinearGradient(-size, -size, size, size);
+            fill.addColorStop(0, shade(color, 0.4));
+            fill.addColorStop(0.5, color);
+            fill.addColorStop(1, shade(color, -0.3));
+            c.fillStyle = fill;
+            c.beginPath();
+            SHAPES[item.kind](c, size);
+            c.closePath();
+            c.fill();
+            c.fillStyle = 'rgba(255, 255, 255, 0.35)';
+            c.beginPath();
+            c.ellipse(-size * 0.3, -size * 0.38, size * 0.3, size * 0.16, -0.6, 0, Math.PI * 2);
+            c.fill();
+            c.restore();
+        };
+
+        return {
+            width: W,
+            height: H,
+            hintKeys: `Кликни по камню, затем по соседнему, или перетащи его. Собирай ряды от трёх одинаковых. Ряд из четырёх даёт лишний ход. Всего ${MOVES} ходов`,
+            hintTouch: `Сдвинь камень к соседнему пальцем. Собирай ряды от трёх одинаковых. Ряд из четырёх даёт лишний ход. Всего ${MOVES} ходов`,
+            reset() {
+                fill();
+                phase = 'idle';
+                after = null;
+                picked = null;
+                press = null;
+                moves = MOVES;
+                points = 0;
+                combo = 0;
+                banner = null;
+                bits.clear();
+                paintHud();
+            },
+            release() {
+                press = null;
+            },
+            pointer(type, x, y) {
+                if (type === 'pointerdown') {
+                    const cell = cellAt(x, y);
+                    if (!cell || phase !== 'idle') return;
+                    if (picked && Math.abs(picked.r - cell.r) + Math.abs(picked.c - cell.c) === 1) return trySwap(picked, cell);
+                    picked = picked && picked.r === cell.r && picked.c === cell.c ? null : cell;
+                    press = { cell, x, y };
+                } else if (type === 'pointermove' && press) {
+                    const dx = x - press.x;
+                    const dy = y - press.y;
+                    if (Math.max(Math.abs(dx), Math.abs(dy)) < 18) return;
+                    const horizontal = Math.abs(dx) > Math.abs(dy);
+                    const other = { r: press.cell.r + (horizontal ? 0 : Math.sign(dy)), c: press.cell.c + (horizontal ? Math.sign(dx) : 0) };
+                    if (inside(other)) trySwap(press.cell, other);
+                    press = null;
+                } else if (type !== 'pointermove') press = null;
+            },
+            update(dt) {
+                let moving = false;
+                for (const row of grid) {
+                    for (const item of row) {
+                        if (item.ox || item.oy) moving = true;
+                        item.ox = approach(item.ox, SPEED * dt);
+                        item.oy = approach(item.oy, SPEED * dt);
+                    }
+                }
+                if (phase === 'move' && !moving) {
+                    const next = after;
+                    after = null;
+                    next?.();
+                } else if (phase === 'pop') {
+                    popTime -= dt;
+                    for (const row of grid) {
+                        for (const item of row) if (item.pop) item.pop = Math.max(0.001, popTime);
+                    }
+                    if (popTime <= 0) collapse();
+                }
+                if (banner && (banner.life -= dt) <= 0) banner = null;
+                bits.step(dt);
+            },
+            draw(c, theme) {
+                c.fillStyle = theme.tint;
+                for (let r = 0; r < ROWS; r++) {
+                    for (let col = 0; col < COLS; col++) {
+                        roundRect(c, PAD + col * CELL + 2, PAD + r * CELL + 2, CELL - 4, CELL - 4, 10);
+                        c.fill();
+                    }
+                }
+                if (picked) {
+                    c.lineWidth = 2.5;
+                    c.strokeStyle = theme.text;
+                    roundRect(c, PAD + picked.c * CELL + 2, PAD + picked.r * CELL + 2, CELL - 4, CELL - 4, 10);
+                    c.stroke();
+                }
+                c.save();
+                c.beginPath();
+                c.rect(0, PAD, W, H);
+                c.clip();
+                grid.forEach((row, r) => row.forEach((item, col) => paintGem(c, item, PAD + col * CELL + CELL / 2 + item.ox, PAD + r * CELL + CELL / 2 + item.oy)));
+                c.restore();
+                bits.draw(c);
+                if (banner) {
+                    c.globalAlpha = Math.min(1, banner.life * 2);
+                    c.font = '800 20px system-ui, sans-serif';
+                    c.textAlign = 'center';
+                    c.textBaseline = 'middle';
+                    c.lineWidth = 4;
+                    c.strokeStyle = 'rgba(10, 10, 18, 0.7)';
+                    c.strokeText(banner.text, W / 2, H / 2);
+                    c.fillStyle = '#fff';
+                    c.fillText(banner.text, W / 2, H / 2);
+                    c.globalAlpha = 1;
+                }
+            }
+        };
+    });
+
+    // --- Блоки ---
+    const blocks = arcade(({ hud, finish }) => {
+        const SIZE = 8;
+        const CELL = 40;
+        const W = 360;
+        const H = 520;
+        const BX = (W - SIZE * CELL) / 2;
+        const BY = 14;
+        const TRAY_Y = 436;
+        const SLOT = W / 3;
+        const SMALL = 18;
+        const FADE = 0.3;
+        const COLORS = ['#ef4444', '#f59e0b', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899'];
+        const SHAPES = [
+            [[0, 0]],
+            [[0, 0], [0, 1]], [[0, 0], [1, 0]],
+            [[0, 0], [0, 1], [0, 2]], [[0, 0], [1, 0], [2, 0]],
+            [[0, 0], [0, 1], [0, 2], [0, 3]], [[0, 0], [1, 0], [2, 0], [3, 0]],
+            [[0, 0], [0, 1], [0, 2], [0, 3], [0, 4]], [[0, 0], [1, 0], [2, 0], [3, 0], [4, 0]],
+            [[0, 0], [0, 1], [1, 0], [1, 1]],
+            [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2], [2, 0], [2, 1], [2, 2]],
+            [[0, 0], [1, 0], [1, 1]], [[0, 1], [1, 0], [1, 1]], [[0, 0], [0, 1], [1, 0]], [[0, 0], [0, 1], [1, 1]],
+            [[0, 0], [1, 0], [2, 0], [2, 1], [2, 2]], [[0, 2], [1, 2], [2, 0], [2, 1], [2, 2]], [[0, 0], [0, 1], [0, 2], [1, 0], [2, 0]], [[0, 0], [0, 1], [0, 2], [1, 2], [2, 2]],
+            [[0, 0], [0, 1], [0, 2], [1, 1]], [[0, 1], [1, 0], [1, 1], [1, 2]], [[0, 0], [1, 0], [1, 1], [2, 0]], [[0, 1], [1, 0], [1, 1], [2, 1]]
+        ];
+        const LINE = [...Array(SIZE).keys()];
+        let board, tray, drag, points, streak, fading, banner;
+
+        const paintHud = () => hud(`Счёт ${points} · Рекорд ${data.best.blocks || 0}`);
+        const span = (cells) => [Math.max(...cells.map(([r]) => r)) + 1, Math.max(...cells.map(([, c]) => c)) + 1];
+        const fits = (cells, r0, c0) => cells.every(([r, c]) => board[r0 + r]?.[c0 + c] === 0);
+        const anyFit = (cells) => LINE.some((r) => LINE.some((c) => fits(cells, r, c)));
+        const deal = () => {
+            tray = [0, 1, 2].map(() => ({ cells: pick(SHAPES), color: 1 + Math.floor(Math.random() * COLORS.length), used: false }));
+        };
+        // Клетка поля, куда ляжет левый верхний угол фигуры под пальцем
+        const target = () => {
+            const [rows, cols] = span(drag.piece.cells);
+            return [Math.round((drag.y - drag.lift - rows * CELL / 2 - BY) / CELL), Math.round((drag.x - cols * CELL / 2 - BX) / CELL)];
+        };
+        const place = (piece, r0, c0) => {
+            for (const [r, c] of piece.cells) board[r0 + r][c0 + c] = piece.color;
+            piece.used = true;
+            points += piece.cells.length;
+            const rows = LINE.filter((r) => board[r].every(Boolean));
+            const cols = LINE.filter((c) => board.every((row) => row[c]));
+            const lines = rows.length + cols.length;
+            if (lines) {
+                streak++;
+                points += lines * lines * 10 + (streak > 1 ? streak * 5 : 0);
+                const clear = (r, c) => {
+                    if (!board[r][c]) return;
+                    fading.push({ r, c, color: board[r][c], life: FADE });
+                    board[r][c] = 0;
+                };
+                rows.forEach((r) => LINE.forEach((c) => clear(r, c)));
+                cols.forEach((c) => LINE.forEach((r) => clear(r, c)));
+                banner = { text: streak > 1 ? `Серия ×${streak}` : lines > 1 ? `${lines} линии сразу` : '', life: 0.9 };
+                Sound.tone(392 * 2 ** (Math.min(streak + lines, 9) / 6), 0.18, 'triangle', 0.13);
+            } else {
+                streak = 0;
+                Sound.play('drop', { volume: 0.5 });
+            }
+            if (tray.every((item) => item.used)) deal();
+            paintHud();
+            if (tray.some((item) => !item.used && anyFit(item.cells))) return;
+            const fresh = record('blocks', points);
+            paintHud();
+            Sound.play('lose');
+            finish('Места больше нет', `Счёт ${points}${fresh && points ? ', новый рекорд!' : ''}${earn(points / 8)}`);
+        };
+        const paintCell = (c, x, y, size, color, alpha = 1) => {
+            c.globalAlpha = alpha;
+            c.fillStyle = COLORS[color - 1];
+            roundRect(c, x + 1.5, y + 1.5, size - 3, size - 3, size * 0.2);
+            c.fill();
+            c.fillStyle = 'rgba(255, 255, 255, 0.28)';
+            roundRect(c, x + size * 0.14, y + size * 0.12, size * 0.72, size * 0.3, size * 0.12);
+            c.fill();
+            c.globalAlpha = 1;
+        };
+        const paintPiece = (c, piece, x, y, size, alpha = 1) => {
+            const [rows, cols] = span(piece.cells);
+            for (const [r, col] of piece.cells) paintCell(c, x - cols * size / 2 + col * size, y - rows * size / 2 + r * size, size, piece.color, alpha);
+        };
+
+        return {
+            width: W,
+            height: H,
+            hintKeys: 'Перетаскивай фигуры мышью на поле. Заполненный ряд или столбец исчезает. Игра идёт, пока фигурам есть место',
+            hintTouch: 'Перетаскивай фигуры на поле. Заполненный ряд или столбец исчезает. Игра идёт, пока фигурам есть место',
+            reset() {
+                board = LINE.map(() => LINE.map(() => 0));
+                drag = null;
+                points = 0;
+                streak = 0;
+                fading = [];
+                banner = null;
+                deal();
+                paintHud();
+            },
+            release() {
+                drag = null;
+            },
+            pointer(type, x, y) {
+                if (type === 'pointerdown') {
+                    const piece = tray[clamp(Math.floor(x / SLOT), 0, 2)];
+                    // Палец не должен закрывать фигуру, поэтому на сенсорном экране она едет выше
+                    if (y > TRAY_Y - 70 && !piece.used) drag = { piece, x, y, lift: touchScreen() ? 80 : 24 };
+                } else if (type === 'pointermove') {
+                    if (drag) Object.assign(drag, { x, y });
+                } else if (drag) {
+                    const { piece } = drag;
+                    const [r0, c0] = target();
+                    drag = null;
+                    if (type === 'pointerup' && fits(piece.cells, r0, c0)) place(piece, r0, c0);
+                }
+            },
+            update(dt) {
+                for (const cell of fading) cell.life -= dt;
+                fading = fading.filter((cell) => cell.life > 0);
+                if (banner && (banner.life -= dt) <= 0) banner = null;
+            },
+            draw(c, theme) {
+                c.fillStyle = theme.tint;
+                for (const r of LINE) {
+                    for (const col of LINE) {
+                        roundRect(c, BX + col * CELL + 1.5, BY + r * CELL + 1.5, CELL - 3, CELL - 3, 8);
+                        c.fill();
+                    }
+                }
+                board.forEach((row, r) => row.forEach((color, col) => {
+                    if (color) paintCell(c, BX + col * CELL, BY + r * CELL, CELL, color);
+                }));
+                for (const cell of fading) {
+                    const size = CELL * cell.life / FADE;
+                    paintCell(c, BX + cell.c * CELL + (CELL - size) / 2, BY + cell.r * CELL + (CELL - size) / 2, size, cell.color, cell.life / FADE);
+                }
+                if (drag) {
+                    const [r0, c0] = target();
+                    if (fits(drag.piece.cells, r0, c0)) {
+                        for (const [r, col] of drag.piece.cells) paintCell(c, BX + (c0 + col) * CELL, BY + (r0 + r) * CELL, CELL, drag.piece.color, 0.35);
+                    }
+                }
+                tray.forEach((piece, i) => {
+                    if (piece.used || piece === drag?.piece) return;
+                    paintPiece(c, piece, SLOT * i + SLOT / 2, TRAY_Y, SMALL, anyFit(piece.cells) ? 1 : 0.3);
+                });
+                if (drag) paintPiece(c, drag.piece, drag.x, drag.y - drag.lift, CELL, 0.92);
+                if (banner?.text) {
+                    c.globalAlpha = Math.min(1, banner.life * 2);
+                    c.font = '800 20px system-ui, sans-serif';
+                    c.textAlign = 'center';
+                    c.textBaseline = 'middle';
+                    c.lineWidth = 4;
+                    c.strokeStyle = 'rgba(10, 10, 18, 0.7)';
+                    c.strokeText(banner.text, W / 2, BY + SIZE * CELL / 2);
+                    c.fillStyle = '#fff';
+                    c.fillText(banner.text, W / 2, BY + SIZE * CELL / 2);
+                    c.globalAlpha = 1;
+                }
+            }
+        };
+    });
+
+    // --- Колбы ---
+    const flasks = (shell) => {
+        const CAP = 4;
+        const COLORS = ['#ef4444', '#f59e0b', '#fde047', '#22c55e', '#06b6d4', '#3b82f6', '#a855f7', '#ec4899', '#94a3b8'];
+        const el = make(`<div class="flasks">
+            <div class="flask-row"></div>
+            <p class="game-status" role="status"></p>
+            <div class="game-buttons">
+                <button type="button" class="btn" data-undo>Отменить</button>
+                <button type="button" class="btn" data-extra>Ещё колба</button>
+                <button type="button" class="btn btn-primary" data-next hidden>Дальше</button>
+            </div>
+        </div>`);
+        const row = el.querySelector('.flask-row');
+        const status = el.querySelector('.game-status');
+        const undoButton = el.querySelector('[data-undo]');
+        const extraButton = el.querySelector('[data-extra]');
+        const nextButton = el.querySelector('[data-next]');
+        let tubes, picked, history, moves, extra, solved, stage, kinds;
+
+        const whole = (tube) => tube.length === CAP && tube.every((color) => color === tube[0]);
+        const paint = () => {
+            row.innerHTML = tubes.map((tube, i) => `<button type="button" class="flask ${i === picked ? 'picked' : ''} ${whole(tube) ? 'done' : ''}" data-tube="${i}" aria-label="Колба ${i + 1}, заполнено ${tube.length} из ${CAP}">
+                ${tube.map((color) => `<i style="--c:${COLORS[color]}"></i>`).join('')}
+            </button>`).join('');
+            undoButton.disabled = solved || !history.length;
+            extraButton.disabled = solved || extra;
+            nextButton.hidden = !solved;
+            shell.hud(`Уровень ${stage} · Ходы ${moves}`);
+        };
+        const restart = () => {
+            stage = data.level.flasks || 1;
+            kinds = Math.min(COLORS.length, 3 + Math.floor((stage - 1) / 2)); // Новый цвет каждые два уровня
+            do {
+                const pool = shuffle(Array.from({ length: kinds * CAP }, (_, i) => i % kinds));
+                tubes = Array.from({ length: kinds }, (_, i) => pool.slice(i * CAP, (i + 1) * CAP));
+            } while (tubes.some(whole));
+            tubes.push([], []);
+            picked = null;
+            history = [];
+            moves = 0;
+            extra = false;
+            solved = false;
+            status.textContent = 'Собери в каждой колбе один цвет. Переливать можно на такой же цвет или в пустую колбу';
+            paint();
+        };
+        const pour = (from, to) => {
+            const a = tubes[from];
+            const b = tubes[to];
+            const color = a[a.length - 1];
+            if (b.length >= CAP || (b.length && b[b.length - 1] !== color)) return false;
+            history.push(JSON.stringify(tubes));
+            while (a.length && a[a.length - 1] === color && b.length < CAP) b.push(a.pop());
+            moves++;
+            Sound.play('drop', { volume: 0.5 });
+            if (tubes.every((tube) => !tube.length || whole(tube))) {
+                solved = true;
+                record('flasks', stage);
+                data.level.flasks = stage + 1;
+                save();
+                Sound.play('win');
+                status.textContent = `Уровень ${stage} пройден. Ходов: ${moves}${earn(8 + stage)}`;
+            }
+            return true;
+        };
+
+        el.addEventListener('click', (e) => {
+            const target = e.target.closest('button');
+            if (!target) return;
+            if ('next' in target.dataset) return restart();
+            if ('undo' in target.dataset) {
+                tubes = JSON.parse(history.pop());
+                picked = null;
+            } else if ('extra' in target.dataset) {
+                extra = true;
+                tubes.push([]);
+                history = history.map((past) => JSON.stringify([...JSON.parse(past), []])); // Отмена хода не должна забирать колбу
+            } else if (target.dataset.tube && !solved) {
+                const i = Number(target.dataset.tube);
+                if (picked === null) {
+                    if (tubes[i].length && !whole(tubes[i])) picked = i;
+                } else if (picked === i || pour(picked, i)) picked = null;
+                else {
+                    picked = tubes[i].length && !whole(tubes[i]) ? i : null;
+                    Sound.play('bump', { volume: 0.3 });
+                }
+            }
+            paint();
+        });
+
+        restart();
+        return {
+            el,
+            // Кнопка «заново» возвращает к началу текущего уровня
+            restart() {
+                if (solved) data.level.flasks = stage;
+                restart();
+            }
+        };
+    };
+
+    // --- Пары ---
+    const pairs = (shell) => {
+        const SIZES = [6, 8, 10];
+        const LABELS = SIZES.map((size) => `${size * 2} карт`);
+        const SHOW = 800; // Сколько видна пара, которая не совпала
+        const el = make(`<div class="pairs">
+            <div class="pairs-modes"></div>
+            <div class="pairs-board"></div>
+            <p class="game-status" role="status"></p>
+        </div>`);
+        const board = el.querySelector('.pairs-board');
+        const modes = el.querySelector('.pairs-modes');
+        const status = el.querySelector('.game-status');
+        let cards, open, moves, left, lock;
+
+        const level = () => data.level.pairs ?? 0;
+        const paint = () => {
+            board.innerHTML = cards.map((card, i) => (card.open || card.done
+                ? `<span class="pcard face ${card.done ? 'done' : ''}" style="--face:url('${faceUrl(card)}')" role="img" aria-label="${cardName(card)}"></span>`
+                : `<button type="button" class="pcard back" data-card="${i}" aria-label="Закрытая карта ${i + 1}"></button>`)).join('');
+            shell.hud(`Ходы ${moves} · Рекорд ${data.best[`pairs${level()}`] ?? '—'}`);
+        };
+        const restart = () => {
+            clearTimeout(lock);
+            lock = 0;
+            cards = shuffle(newDeck(2).slice(0, SIZES[level()]).flatMap((card) => [{ ...card }, { ...card }]));
+            cards.forEach((card) => picture(faceUrl(card))); // Картинки грузим заранее, иначе карта открывается пустой
+            open = [];
+            moves = 0;
+            left = SIZES[level()];
+            modes.innerHTML = chipsRow('mode', LABELS, level());
+            status.textContent = 'Открывай по две карты и ищи одинаковые';
+            paint();
+        };
+
+        el.addEventListener('click', (e) => {
+            const target = e.target.closest('button');
+            if (!target) return;
+            if (target.dataset.mode) {
+                data.level.pairs = Number(target.dataset.mode);
+                save();
+                restart();
+                return;
+            }
+            if (!target.dataset.card || lock) return;
+            const card = cards[Number(target.dataset.card)];
+            card.open = true;
+            open.push(card);
+            Sound.play('card');
+            if (open.length === 2) {
+                const [a, b] = open;
+                open = [];
+                moves++;
+                if (a.id === b.id) {
+                    a.done = b.done = true;
+                    left--;
+                    Sound.play('coin', { volume: 0.5 });
+                    if (!left) {
+                        const fresh = fastest(`pairs${level()}`, moves);
+                        Sound.play('win');
+                        status.textContent = `Все пары найдены. Ходов: ${moves}${fresh ? ', новый рекорд!' : ''}${earn([8, 12, 18][level()])}`;
+                    }
+                } else {
+                    lock = setTimeout(() => {
+                        lock = 0;
+                        a.open = b.open = false;
+                        paint();
+                    }, SHOW);
+                }
+            }
+            paint();
+        });
+
+        restart();
+        return { el, restart };
+    };
+
     // --- Раздел ---
+    const GROUPS = [
+        ['Гонки', ['racing', 'grandprix', 'drift', 'lights']],
+        ['Аркады', ['snake', 'space', 'breakout', 'pong', 'tower']],
+        ['Головоломки', ['gems', 'blocks', 'flasks', 'merge', 'mines', 'pairs', 'simon']],
+        ['Карты', ['blackjack', 'durak']]
+    ];
     const CATALOG = {
+        snake: { title: 'Змейка', text: 'Расти и не врезайся', icon: 'snake', create: snake, note: () => `Рекорд ${data.best.snake || 0}` },
+        space: { title: 'Космос', text: 'Сбивай астероиды и лови бонусы', icon: 'rocket', create: space, note: () => `Рекорд ${data.best.space || 0}` },
+        gems: { title: 'Кристаллы', text: 'Три в ряд на 25 ходов', icon: 'gems', create: gems, note: () => `Рекорд ${data.best.gems || 0}` },
+        blocks: { title: 'Блоки', text: 'Укладывай фигуры и чисти линии', icon: 'blocks', create: blocks, note: () => `Рекорд ${data.best.blocks || 0}` },
+        flasks: { title: 'Колбы', text: 'Разлей цвета по колбам', icon: 'flask', create: flasks, note: () => `Уровень ${data.level.flasks || 1}` },
+        pairs: { title: 'Пары', text: 'Найди одинаковые карты', icon: 'pairs', create: pairs, note: () => {
+            const best = data.best[`pairs${data.level.pairs ?? 0}`];
+            return best === undefined ? 'Рекорда пока нет' : `Рекорд ${best} ходов`;
+        } },
         racing: { title: 'Гонки', text: 'Этапы, гараж и прокачка', icon: 'car', create: racing, note: () => `Этап ${data.race.stage} · Гонщик ${driverLevel().level} ур.` },
         grandprix: { title: 'Гран-при', text: 'Сезон из 6 этапов, шины и пит-стопы', icon: 'f1', create: grandprix, note: () => `Этап ${data.f1.round + 1} из ${GP_ROUNDS.length} · Очки ${data.f1.points['Ты'] || 0}${data.f1.titles ? ` · Титулы ${data.f1.titles}` : ''}` },
         lights: { title: 'Старт', text: 'Поймай момент, когда погаснут огни', icon: 'lights', create: lights, note: () => (data.best.lights === undefined ? 'Рекорда пока нет' : `Рекорд ${data.best.lights} мс`) },
@@ -4994,22 +6059,30 @@ window.Games = (() => {
         root.innerHTML = `
             <div class="page-head">
                 <h1 class="page-title">Игры</h1>
-                <p class="page-sub">Перерыв между главами</p>
+                <p class="page-sub">Монеты ${data.race.cash} · копятся во всех играх, тратятся в гараже «Гонок»</p>
             </div>
-            <div class="game-grid">${Object.entries(CATALOG).map(([id, game]) => `
-                <button type="button" class="game-card glass" data-game="${id}">
-                    <span class="brand-mark">${ICON_HREF(game.icon)}</span>
+            ${CATALOG[data.last] ? group('Продолжить', [data.last], 'wide') : ''}
+            ${GROUPS.map(([title, ids]) => group(title, ids)).join('')}`;
+    };
+    const group = (title, ids, extra = '') => `
+        <section class="game-group">
+            <div class="section-head"><h2 class="section-title">${title}</h2></div>
+            <div class="game-grid">${ids.map((id) => `
+                <button type="button" class="game-card glass ${extra}" data-game="${id}">
+                    <span class="brand-mark">${ICON_HREF(CATALOG[id].icon)}</span>
                     <span class="game-card-text">
-                        <b>${game.title}</b>
-                        <span>${game.text}</span>
-                        <small>${game.note()}</small>
+                        <b>${CATALOG[id].title}</b>
+                        <span>${CATALOG[id].text}</span>
+                        <small>${CATALOG[id].note()}</small>
                     </span>
                 </button>`).join('')}
-            </div>`;
-    };
+            </div>
+        </section>`;
 
     const openGame = (id) => {
         const game = CATALOG[id];
+        data.last = id; // Последняя игра встречает первой в меню
+        save();
         root.innerHTML = `<div class="game-bar glass">
             <button type="button" class="round-btn" data-back aria-label="Все игры" title="Все игры">${ICON_HREF('back')}</button>
             <b class="game-title">${game.title}</b>

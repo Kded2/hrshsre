@@ -1012,6 +1012,35 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
 .game-card-text b { font-size: 17px; font-weight: 660; }
 .game-card-text span { color: var(--text-2); font-size: 14px; }
 .game-card-text small { color: var(--text-3); font-size: 12.5px; }
+.game-card-text b, .game-card-text small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.game-group { margin-top: 24px; }
+.game-group:first-of-type { margin-top: 0; }
+
+/* Колбы */
+.flask-row { display: flex; flex-wrap: wrap; justify-content: center; gap: 22px 12px; width: min(100%, 460px); margin: 18px auto 0; }
+.flask {
+    display: flex;
+    flex-direction: column-reverse;
+    width: 44px;
+    height: 146px;
+    padding: 0 3px 3px;
+    overflow: hidden;
+    border: 2px solid var(--text-3);
+    border-top-color: transparent;
+    border-radius: 6px 6px 22px 22px;
+    background: var(--tint);
+    transition: transform 0.25s var(--spring), border-color 0.2s ease;
+}
+.flask i { flex: none; height: 34px; background: var(--c); box-shadow: inset 0 -3px 0 rgba(0, 0, 0, 0.14), inset 0 2px 0 rgba(255, 255, 255, 0.22); }
+.flask i:first-child { border-radius: 0 0 17px 17px; }
+.flask.picked { transform: translateY(-14px); border-color: var(--accent); border-top-color: transparent; }
+.flask.done { border-color: var(--s-completed); border-top-color: transparent; }
+
+/* Пары */
+.pairs-board { --cw: min(74px, calc((100vw - 32px - 30px) / 4)); display: grid; grid-template-columns: repeat(4, var(--cw)); justify-content: center; gap: 10px; margin-top: 14px; }
+.pairs-board .pcard { transition: transform 0.25s var(--spring), opacity 0.3s ease; }
+.pairs-board .pcard.back:not([disabled]):hover { transform: translateY(-4px); }
+.pairs-board .pcard.done { opacity: 0.45; }
 
 .game-bar {
     display: flex;
@@ -1332,17 +1361,23 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     .row { grid-template-columns: 52px minmax(0, 1fr) auto; }
     .row-progress { display: none; }
 
-    .dock { left: 16px; right: 16px; width: auto; max-width: none; transform: none; }
-    .tabbar { flex: 1; }
-    /* Подпись только у открытого раздела: пять подписей в одну строку не помещаются */
-    .tab { flex: 1 1 0; min-width: 0; padding: 0; font-size: 13.5px; }
-    .tab .icon { width: 23px; height: 23px; }
-    .tab span { display: none; }
-    .tab.active { flex: 0 0 auto; padding: 0 16px; }
-    .tab.active span { display: inline; }
-    .dock-add { width: 56px; }
+    .tile-value { white-space: nowrap; }
+    .goal .ring { width: 48px; height: 48px; }
 
-    .game-grid { grid-template-columns: minmax(0, 1fr); gap: 10px; }
+    .dock { left: 12px; right: 12px; gap: 6px; width: auto; max-width: none; transform: none; }
+    .tabbar { flex: 1; padding: 4px; }
+    /* Подпись под каждой иконкой: разделы видны сразу и вкладки не меняют ширину */
+    .tab { flex: 1 1 0; flex-direction: column; gap: 1px; min-width: 0; min-height: 50px; padding: 0; font-size: 9.5px; font-weight: 600; letter-spacing: -0.01em; }
+    .tab .icon { width: 22px; height: 22px; }
+    .tab span { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .tab-pill { top: 4px; bottom: 4px; border-radius: 24px; }
+    .dock-add { width: 58px; }
+
+    .game-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+    .game-card:not(.wide) { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .game-card:not(.wide) .brand-mark { width: 40px; height: 40px; }
+    .game-card:not(.wide) .game-card-text span { display: none; }
+    .game-card.wide { grid-column: 1 / -1; }
     .game-bar { gap: 2px; }
     .game-bar .round-btn { width: 38px; height: 38px; }
     .game-title { font-size: 15px; }
@@ -1369,6 +1404,30 @@ dialog.ask { width: min(420px, calc(100vw - 32px)); }
     .sheet-body { padding: 16px 16px calc(20px + var(--safe-bottom)); }
     .detail-hero { padding: 16px; grid-template-columns: 104px minmax(0, 1fr); gap: 14px; }
     .detail-cover { width: 104px; }
+}
+
+/* На широком экране разделы переезжают в шапку, а шапка остаётся на месте при прокрутке */
+@media (min-width: 1100px) {
+    html { scroll-padding-top: 96px; }
+    body { padding-bottom: calc(56px + var(--safe-bottom)); }
+    .topbar { position: sticky; top: var(--safe-top); z-index: 29; }
+    .topbar::before {
+        content: '';
+        position: absolute;
+        z-index: -1;
+        top: calc(-1 * var(--safe-top));
+        bottom: -16px;
+        left: calc(50% - 50vw);
+        right: calc(50% - 50vw);
+        pointer-events: none;
+        -webkit-backdrop-filter: blur(18px);
+        backdrop-filter: blur(18px);
+        -webkit-mask-image: linear-gradient(#000 64%, transparent);
+        mask-image: linear-gradient(#000 64%, transparent);
+    }
+    .dock { top: calc(14px + var(--safe-top)); bottom: auto; }
+    .bulk-bar { bottom: calc(24px + var(--safe-bottom)); }
+    .toasts { inset: auto auto calc(24px + var(--safe-bottom)) 50%; align-content: end; }
 }
 
 @media (hover: none) {
